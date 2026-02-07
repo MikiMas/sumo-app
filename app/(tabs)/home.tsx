@@ -1,10 +1,10 @@
-import { Link } from "expo-router";
+﻿import { Link } from "expo-router";
 import { useEffect, useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Card, Screen } from "@/components/ui";
-import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/providers/AuthProvider";
+import { fetchHomeStats } from "@/services/routes";
 
 type Stats = {
   myBikes: number;
@@ -22,17 +22,12 @@ export default function HomeScreen() {
         return;
       }
 
-      const [bikesRes, routesRes, sessionsRes] = await Promise.all([
-        supabase.from("bikes").select("id", { count: "exact", head: true }).eq("owner_id", user.id),
-        supabase.from("routes").select("id", { count: "exact", head: true }).eq("is_public", true),
-        supabase.from("route_sessions").select("id", { count: "exact", head: true }).eq("status", "active")
-      ]);
-
-      setStats({
-        myBikes: bikesRes.count ?? 0,
-        publicRoutes: routesRes.count ?? 0,
-        activeSessions: sessionsRes.count ?? 0
-      });
+      try {
+        const next = await fetchHomeStats();
+        setStats(next);
+      } catch (error) {
+        console.error("Error cargando stats:", error);
+      }
     };
 
     loadStats();

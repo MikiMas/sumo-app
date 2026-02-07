@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+﻿import { apiRequest } from "@/lib/api";
 import { Database } from "@/types/db";
 
 type BikeRow = Database["public"]["Tables"]["bikes"]["Row"];
@@ -10,52 +10,35 @@ export type GarageBike = BikeRow & {
   bike_mods: BikeModRow[];
 };
 
-export async function fetchGarage(userId: string) {
-  const { data, error } = await supabase
-    .from("bikes")
-    .select("*, bike_mods(*)")
-    .eq("owner_id", userId)
-    .order("created_at", { ascending: false });
+export async function fetchGarage(_userId: string) {
+  const response = await apiRequest<{ ok: boolean; bikes: GarageBike[] }>("/api/sumo/garage", {
+    auth: true
+  });
 
-  if (error) {
-    throw error;
-  }
-
-  return (data ?? []) as GarageBike[];
+  return response.bikes ?? [];
 }
 
-export async function createBike(input: Omit<BikeInsert, "owner_id">, ownerId: string) {
-  const { data, error } = await supabase
-    .from("bikes")
-    .insert({
-      ...input,
-      owner_id: ownerId
-    })
-    .select("*")
-    .single();
+export async function createBike(input: Omit<BikeInsert, "owner_id">, _ownerId: string) {
+  const response = await apiRequest<{ ok: boolean; bike: BikeRow }>("/api/sumo/garage", {
+    method: "POST",
+    auth: true,
+    body: input
+  });
 
-  if (error) {
-    throw error;
-  }
-
-  return data;
+  return response.bike;
 }
 
 export async function addBikeMod(input: Omit<BikeModInsert, "category"> & { category?: string }) {
-  const { data, error } = await supabase
-    .from("bike_mods")
-    .insert({
+  const response = await apiRequest<{ ok: boolean; mod: BikeModRow }>("/api/sumo/garage/mods", {
+    method: "POST",
+    auth: true,
+    body: {
       bike_id: input.bike_id,
       name: input.name,
       notes: input.notes ?? null,
       category: input.category ?? "general"
-    })
-    .select("*")
-    .single();
+    }
+  });
 
-  if (error) {
-    throw error;
-  }
-
-  return data;
+  return response.mod;
 }

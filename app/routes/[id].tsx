@@ -1,4 +1,4 @@
-import { router, useLocalSearchParams } from "expo-router";
+﻿import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import MapView, { Marker, Polyline } from "react-native-maps";
@@ -6,7 +6,6 @@ import MapView, { Marker, Polyline } from "react-native-maps";
 import { AppButton, Card, Screen } from "@/components/ui";
 import { env } from "@/lib/env";
 import { ensureForegroundLocationPermission, getCurrentPosition } from "@/lib/location";
-import { supabase } from "@/lib/supabase";
 import { timeAgo } from "@/lib/time";
 import { useAuth } from "@/providers/AuthProvider";
 import {
@@ -76,19 +75,7 @@ export default function RouteDetailScreen() {
       return;
     }
 
-    const channel = supabase
-      .channel(`route-sessions-${routeId}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "route_sessions", filter: `route_id=eq.${routeId}` }, () => {
-        fetchActiveRiders(routeId)
-          .then(setRiders)
-          .catch((error) => console.error("Error refrescando riders realtime:", error));
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [routeId]);
+    const interval = setInterval(() => {`r`n      fetchActiveRiders(routeId)`r`n        .then(setRiders)`r`n        .catch((error) => console.error("Error refrescando riders:", error));`r`n    }, 5000);`r`n`r`n    return () => {`r`n      clearInterval(interval);`r`n    };`r`n  }, [routeId]);
 
   const sendTick = useCallback(async () => {
     if (!activeSession) {
@@ -97,8 +84,7 @@ export default function RouteDetailScreen() {
 
     try {
       const coords = await getCurrentPosition();
-      await sendLocationTick({
-        sessionId: activeSession.id,
+      await sendLocationTick({`r`n        routeId: route.id,
         lat: coords.latitude,
         lng: coords.longitude,
         speedMps: coords.speed,
@@ -146,8 +132,7 @@ export default function RouteDetailScreen() {
 
       const session = await startRouteSession(route.id, user.id, shareLocation);
       setActiveSession(session);
-      await sendLocationTick({
-        sessionId: session.id,
+      await sendLocationTick({`r`n        routeId: route.id,
         lat: coords.latitude,
         lng: coords.longitude,
         speedMps: coords.speed,
@@ -171,7 +156,7 @@ export default function RouteDetailScreen() {
 
     setSavingSession(true);
     try {
-      await stopRouteSession(activeSession.id);
+      await stopRouteSession(route.id, activeSession.id);
       setActiveSession(null);
       if (routeId) {
         const updated = await fetchActiveRiders(routeId);
@@ -343,3 +328,4 @@ const styles = StyleSheet.create({
     color: "#c5d7ea"
   }
 });
+

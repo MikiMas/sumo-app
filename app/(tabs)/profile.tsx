@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 
 import { AppButton, Card, LabeledInput, Screen } from "@/components/ui";
-import { supabase } from "@/lib/supabase";
+import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/providers/AuthProvider";
 
 export default function ProfileScreen() {
@@ -27,24 +27,26 @@ export default function ProfileScreen() {
     }
 
     setSaving(true);
-    const { error } = await supabase
-      .from("profiles")
-      .update({
-        display_name: displayName.trim() || null,
-        home_city: homeCity.trim() || null,
-        bio: bio.trim() || null,
-        default_share_live_location: defaultShare
-      })
-      .eq("id", user.id);
-    setSaving(false);
 
-    if (error) {
-      Alert.alert("No se pudo guardar", error.message);
-      return;
+    try {
+      await apiRequest<{ ok: boolean }>("/api/sumo/profile/me", {
+        method: "PATCH",
+        auth: true,
+        body: {
+          display_name: displayName.trim() || null,
+          home_city: homeCity.trim() || null,
+          bio: bio.trim() || null,
+          default_share_live_location: defaultShare
+        }
+      });
+
+      await refreshProfile();
+      Alert.alert("Perfil actualizado");
+    } catch (error) {
+      Alert.alert("No se pudo guardar", String(error));
+    } finally {
+      setSaving(false);
     }
-
-    await refreshProfile();
-    Alert.alert("Perfil actualizado");
   };
 
   const onSignOut = async () => {

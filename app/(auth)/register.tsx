@@ -1,15 +1,16 @@
-import { Link, router } from "expo-router";
+﻿import { Link, router } from "expo-router";
 import { useState } from "react";
 import { Alert, StyleSheet, Text, View } from "react-native";
 
 import { AppButton, Card, LabeledInput, Screen } from "@/components/ui";
-import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/providers/AuthProvider";
 
 export default function RegisterScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [username, setUsername] = useState("");
   const [loading, setLoading] = useState(false);
+  const { signUp } = useAuth();
 
   const onRegister = async () => {
     if (!email || !password || !username) {
@@ -23,24 +24,14 @@ export default function RegisterScreen() {
     }
 
     setLoading(true);
-    const { error } = await supabase.auth.signUp({
-      email: email.trim(),
-      password,
-      options: {
-        data: {
-          username: username.trim()
-        }
-      }
-    });
-    setLoading(false);
-
-    if (error) {
-      Alert.alert("No se pudo registrar", error.message);
-      return;
+    try {
+      await signUp(email.trim(), password, username.trim());
+      router.replace("/(tabs)/home");
+    } catch (error) {
+      Alert.alert("No se pudo registrar", String(error));
+    } finally {
+      setLoading(false);
     }
-
-    Alert.alert("Cuenta creada", "Ya puedes iniciar sesion.");
-    router.replace("/(auth)/login");
   };
 
   return (
@@ -58,7 +49,10 @@ export default function RegisterScreen() {
       </Card>
 
       <Text style={styles.footer}>
-        Ya tienes cuenta? <Link href="/(auth)/login" style={styles.link}>Entrar</Link>
+        Ya tienes cuenta?{" "}
+        <Link href="/(auth)/login" style={styles.link}>
+          Entrar
+        </Link>
       </Text>
     </Screen>
   );
