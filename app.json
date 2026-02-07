@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "SUMO Supermotard",
+    "slug": "sumo-supermotard",
+    "version": "1.0.0",
+    "scheme": "sumo",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "SUMO usa tu ubicacion para compartir tu posicion en ruta en tiempo real con otros riders.",
+          "isAndroidBackgroundLocationEnabled": false
+        }
+      ]
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "SUMO usa tu ubicacion para que otros usuarios puedan verte dentro de la ruta cuando activas Iniciar ruta."
+      }
+    },
+    "android": {
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ],
+      "package": "com.sumo.supermotard"
+    }
+  }
+}
