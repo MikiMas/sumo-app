@@ -8,6 +8,7 @@ import {
   StoredAuthSession,
   StoredAuthUser
 } from "@/lib/authStorage";
+import { supabase } from "@/lib/supabase";
 import { Database } from "@/types/db";
 
 type Profile = Database["public"]["Tables"]["profiles"]["Row"];
@@ -68,6 +69,41 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setProfile(nextProfile);
   }, []);
 
+  const refreshSessionIfNeeded = useCallback(
+    async (current: StoredAuthSession): Promise<StoredAuthSession> => {
+      if (!current.refreshToken) {
+        return current;
+      }
+
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const expiresAt = current.expiresAt ?? 0;
+      const shouldRefresh = expiresAt <= nowSeconds + 120;
+      if (!shouldRefresh) {
+        return current;
+      }
+
+      const { data, error } = await supabase.auth.setSession({
+        access_token: current.accessToken,
+        refresh_token: current.refreshToken
+      });
+
+      if (error || !data.session) {
+        throw error ?? new Error("No se pudo refrescar la sesion.");
+      }
+
+      const next: StoredAuthSession = {
+        accessToken: data.session.access_token,
+        refreshToken: data.session.refresh_token ?? current.refreshToken,
+        expiresAt: data.session.expires_at ?? current.expiresAt,
+        user: current.user
+      };
+
+      await setStoredAuthSession(next);
+      return next;
+    },
+    []
+  );
+
   const refreshProfile = useCallback(async () => {
     if (!session?.accessToken) {
       setProfile(null);
@@ -94,30 +130,68 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
 
     try {
+      const validSession = await refreshSessionIfNeeded(stored);
       const result = await apiRequest<AuthMePayload>("/api/sumo/auth/me", {
         auth: true,
-        token: stored.accessToken
+        token: validSession.accessToken
       });
 
       const mergedSession: StoredAuthSession = {
-        ...stored,
+        ...validSession,
         user: result.user
       };
 
       await setStoredAuthSession(mergedSession);
       setAuthState(mergedSession, result.profile ?? null);
     } catch (error) {
-      console.error("Sesion invalida. Limpiando credenciales locales:", error);
-      await clearStoredAuthSession();
-      setAuthState(null, null);
+      const message = String(error ?? "");
+      const normalized = message.toLowerCase();
+      const isAuthError =
+        normalized.includes("unauthorized") ||
+        normalized.includes("http_401") ||
+        normalized.includes("invalid jwt") ||
+        normalized.includes("jwt expired");
+
+      if (isAuthError) {
+        console.error("Sesion invalida. Limpiando credenciales locales:", error);
+        await clearStoredAuthSession();
+        setAuthState(null, null);
+      } else {
+        console.warn("No se pudo validar sesion por error temporal de API. Se mantiene sesion local:", error);
+        setAuthState(stored, null);
+      }
     } finally {
       setLoading(false);
     }
-  }, [setAuthState]);
+  }, [refreshSessionIfNeeded, setAuthState]);
 
   useEffect(() => {
     bootstrap();
   }, [bootstrap]);
+
+  useEffect(() => {
+    if (!session?.refreshToken) {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const current = await getStoredAuthSession();
+        if (!current) {
+          return;
+        }
+        const refreshed = await refreshSessionIfNeeded(current);
+        if (refreshed.accessToken !== current.accessToken || refreshed.expiresAt !== current.expiresAt) {
+          setSession(refreshed);
+          setUser(refreshed.user);
+        }
+      } catch (error) {
+        console.error("No se pudo refrescar sesion en segundo plano:", error);
+      }
+    }, 60 * 1000);
+
+    return () => clearInterval(interval);
+  }, [refreshSessionIfNeeded, session?.refreshToken]);
 
   const signIn = useCallback(async (email: string, password: string) => {
     const result = await apiRequest<AuthPayload>("/api/sumo/auth/login", {

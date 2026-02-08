@@ -65,24 +65,24 @@ const styles = StyleSheet.create({
     gap: 6
   },
   title: {
-    color: "#f8fbff",
+    color: "#111827",
     fontSize: 28,
     fontWeight: "900"
   },
   subtitle: {
-    color: "#adc4dc",
+    color: "#6B7280",
     fontSize: 15
   },
   card: {
     gap: 12
   },
   footer: {
-    color: "#adc4dc",
+    color: "#6B7280",
     marginTop: 18,
     textAlign: "center"
   },
   link: {
-    color: "#ff9e54",
+    color: "#FF6A00",
     fontWeight: "700"
   }
 });

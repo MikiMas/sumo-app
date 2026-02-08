@@ -4,7 +4,6 @@ import { Database } from "@/types/db";
 
 type RouteInsert = Database["public"]["Tables"]["routes"]["Insert"];
 type RouteRow = Database["public"]["Tables"]["routes"]["Row"];
-type SessionRow = Database["public"]["Tables"]["route_sessions"]["Row"];
 type RoutePointRow = Database["public"]["Tables"]["route_points"]["Row"];
 
 export type RouteItem = RouteRow & {
@@ -13,15 +12,52 @@ export type RouteItem = RouteRow & {
   } | null;
 };
 
-export type ActiveRider = Pick<
-  SessionRow,
-  "id" | "user_id" | "last_lat" | "last_lng" | "last_seen_at" | "is_location_shared" | "status"
-> & {
-  profiles?: { username: string | null } | null;
-};
-
 export type RoutePoint = Pick<RoutePointRow, "id" | "route_id" | "point_order" | "lat" | "lng">;
 export type LatLngPoint = { lat: number; lng: number };
+export type SpotPresenceMember = {
+  user_id: string;
+  username: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  bike_id: string | null;
+  bike_brand: string | null;
+  bike_model: string | null;
+  bike_nickname: string | null;
+  checked_in_at: string;
+};
+
+export type SpotPresence = {
+  route_id: string;
+  count: number;
+  members: SpotPresenceMember[];
+};
+export type RouteMedia = {
+  id: string;
+  route_id: string;
+  uploaded_by: string;
+  media_url: string;
+  caption: string | null;
+  created_at: string;
+  profiles?: {
+    username?: string | null;
+    display_name?: string | null;
+    avatar_url?: string | null;
+  } | null;
+};
+
+export type RoutePlan = {
+  id: string;
+  route_id: string;
+  user_id: string;
+  planned_at: string;
+  note: string | null;
+  status: string;
+  profiles?: {
+    username?: string | null;
+    display_name?: string | null;
+    avatar_url?: string | null;
+  } | null;
+};
 
 export type HomeStats = {
   myBikes: number;
@@ -64,44 +100,37 @@ export async function replaceRoutePoints(routeId: string, points: { lat: number;
   });
 }
 
-function densifyStraightSegments(points: LatLngPoint[], stepsPerSegment = 30): LatLngPoint[] {
-  if (points.length < 2) {
-    return points;
-  }
-
-  const dense: LatLngPoint[] = [points[0]];
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const from = points[index];
-    const to = points[index + 1];
-    for (let step = 1; step <= stepsPerSegment; step += 1) {
-      const t = step / stepsPerSegment;
-      dense.push({
-        lat: from.lat + (to.lat - from.lat) * t,
-        lng: from.lng + (to.lng - from.lng) * t
-      });
-    }
-  }
-
-  return dense;
-}
-
-async function snapTraceWithApi(points: LatLngPoint[]): Promise<LatLngPoint[]> {
+async function snapTraceWithApi(points: LatLngPoint[], stepsPerSegment = 20): Promise<LatLngPoint[]> {
   if (!env.apiBaseUrl) {
     throw new Error("Falta EXPO_PUBLIC_API_URL en el entorno.");
   }
 
   const endpoint = `${env.apiBaseUrl}/api/sumo/roads/snap`;
   console.log("[SUMO SNAP] POST", endpoint, { inputPoints: points.length });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      points,
-      steps_per_segment: 1,
-      dedupe_epsilon: 0.00001
-    })
-  });
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        points,
+        steps_per_segment: stepsPerSegment,
+        dedupe_epsilon: 0.00001
+      }),
+      signal: controller.signal
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.toLowerCase().includes("abort")) {
+      throw new Error("SUMO_API_SNAP_TIMEOUT");
+    }
+    throw new Error(`SUMO_API_SNAP_NETWORK_ERROR: ${message}`);
+  } finally {
+    clearTimeout(timeout);
+  }
 
   console.log("[SUMO SNAP] STATUS", response.status);
 
@@ -127,88 +156,7 @@ export async function buildRoadSnappedPolyline(points: LatLngPoint[]) {
   if (points.length < 2) {
     return points;
   }
-
-  const denseInput = densifyStraightSegments(points, 30);
-
-  try {
-    return await snapTraceWithApi(denseInput);
-  } catch (error) {
-    console.error("No se pudo ajustar con API, se usa trazado manual:", error);
-    return denseInput;
-  }
-}
-
-export async function fetchMyActiveSession(routeId: string, _userId: string) {
-  const response = await apiRequest<{ ok: boolean; session: SessionRow | null }>(`/api/sumo/routes/${routeId}/session`, {
-    auth: true
-  });
-
-  return response.session;
-}
-
-export async function startRouteSession(routeId: string, _userId: string, isLocationShared: boolean) {
-  const response = await apiRequest<{ ok: boolean; session: SessionRow }>(`/api/sumo/routes/${routeId}/session/start`, {
-    method: "POST",
-    auth: true,
-    body: {
-      is_location_shared: isLocationShared
-    }
-  });
-
-  return response.session;
-}
-
-export async function stopRouteSession(routeId: string, sessionId: string) {
-  await apiRequest<{ ok: boolean }>(`/api/sumo/routes/${routeId}/session/stop`, {
-    method: "POST",
-    auth: true,
-    body: {
-      session_id: sessionId
-    }
-  });
-}
-
-type TickPayload = {
-  routeId: string;
-  sessionId: string;
-  lat: number;
-  lng: number;
-  speedMps?: number | null;
-  headingDeg?: number | null;
-  accuracyM?: number | null;
-};
-
-export async function sendLocationTick(input: TickPayload) {
-  await apiRequest<{ ok: boolean }>(`/api/sumo/routes/${input.routeId}/session/tick`, {
-    method: "POST",
-    auth: true,
-    body: {
-      session_id: input.sessionId,
-      lat: input.lat,
-      lng: input.lng,
-      speed_mps: input.speedMps ?? null,
-      heading_deg: input.headingDeg ?? null,
-      accuracy_m: input.accuracyM ?? null
-    }
-  });
-}
-
-export async function fetchActiveRiders(routeId: string) {
-  const response = await apiRequest<{ ok: boolean; riders: ActiveRider[] }>(`/api/sumo/routes/${routeId}/riders`);
-  return response.riders ?? [];
-}
-
-export async function isNearRouteStart(routeId: string, lat: number, lng: number, radiusM = 500) {
-  const response = await apiRequest<{ ok: boolean; near: boolean }>(`/api/sumo/routes/${routeId}/near-start`, {
-    method: "POST",
-    body: {
-      lat,
-      lng,
-      radius_m: radiusM
-    }
-  });
-
-  return Boolean(response.near);
+  return snapTraceWithApi(points, 20);
 }
 
 export async function fetchHomeStats() {
@@ -217,4 +165,53 @@ export async function fetchHomeStats() {
   });
 
   return response.stats;
+}
+
+export async function fetchRoutePresence(routeId: string): Promise<SpotPresence> {
+  const response = await apiRequest<{ ok: boolean; presence: SpotPresence }>(`/api/sumo/routes/${routeId}/presence`);
+  return response.presence;
+}
+
+export async function checkInRoutePresence(routeId: string, bikeId?: string | null) {
+  await apiRequest<{ ok: boolean }>(`/api/sumo/routes/${routeId}/presence/check-in`, {
+    method: "POST",
+    auth: true,
+    body: {
+      bike_id: bikeId ?? null
+    }
+  });
+}
+
+export async function fetchRouteMedia(routeId: string) {
+  const response = await apiRequest<{ ok: boolean; media: RouteMedia[] }>(`/api/sumo/routes/${routeId}/media`);
+  return response.media ?? [];
+}
+
+export async function addRouteMedia(routeId: string, mediaUrl: string, caption?: string | null) {
+  const response = await apiRequest<{ ok: boolean; media: RouteMedia }>(`/api/sumo/routes/${routeId}/media`, {
+    method: "POST",
+    auth: true,
+    body: {
+      media_url: mediaUrl,
+      caption: caption ?? null
+    }
+  });
+  return response.media;
+}
+
+export async function fetchRoutePlans(routeId: string) {
+  const response = await apiRequest<{ ok: boolean; plans: RoutePlan[] }>(`/api/sumo/routes/${routeId}/plans`);
+  return response.plans ?? [];
+}
+
+export async function addRoutePlan(routeId: string, plannedAtIso: string, note?: string | null) {
+  const response = await apiRequest<{ ok: boolean; plan: RoutePlan }>(`/api/sumo/routes/${routeId}/plans`, {
+    method: "POST",
+    auth: true,
+    body: {
+      planned_at: plannedAtIso,
+      note: note ?? null
+    }
+  });
+  return response.plan;
 }

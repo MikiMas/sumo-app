@@ -5,9 +5,18 @@ type BikeRow = Database["public"]["Tables"]["bikes"]["Row"];
 type BikeInsert = Database["public"]["Tables"]["bikes"]["Insert"];
 type BikeModInsert = Database["public"]["Tables"]["bike_mods"]["Insert"];
 type BikeModRow = Database["public"]["Tables"]["bike_mods"]["Row"];
+type BikeMediaRow = {
+  id: string;
+  bike_id: string;
+  uploaded_by: string;
+  media_url: string;
+  caption: string | null;
+  created_at: string;
+};
 
 export type GarageBike = BikeRow & {
   bike_mods: BikeModRow[];
+  bike_media?: BikeMediaRow[];
 };
 
 export async function fetchGarage(_userId: string) {
@@ -41,4 +50,23 @@ export async function addBikeMod(input: Omit<BikeModInsert, "category"> & { cate
   });
 
   return response.mod;
+}
+
+export async function fetchBikeMedia(bikeId: string) {
+  const response = await apiRequest<{ ok: boolean; media: BikeMediaRow[] }>(`/api/sumo/garage/${bikeId}/media`, {
+    auth: true
+  });
+  return response.media ?? [];
+}
+
+export async function addBikeMedia(bikeId: string, mediaUrl: string, caption?: string | null) {
+  const response = await apiRequest<{ ok: boolean; media: BikeMediaRow }>(`/api/sumo/garage/${bikeId}/media`, {
+    method: "POST",
+    auth: true,
+    body: {
+      media_url: mediaUrl,
+      caption: caption ?? null
+    }
+  });
+  return response.media;
 }

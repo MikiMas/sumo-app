@@ -12,10 +12,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@supabase/supabase-js": "^2.52.0",
     "expo": "~54.0.33",
     "expo-constants": "~18.0.13",
+    "expo-image-picker": "^17.0.10",
     "expo-linking": "~8.0.11",
     "expo-location": "~19.0.8",
     "expo-router": "~6.0.23",
@@ -30,8 +32,8 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
-    "babel-preset-expo": "~54.0.10",
     "@types/react": "~19.1.10",
+    "babel-preset-expo": "~54.0.10",
     "eslint": "^8.57.1",
     "eslint-config-expo": "~10.0.0",
     "typescript": "~5.9.2"

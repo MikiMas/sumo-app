@@ -17,18 +17,18 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#0b1118",
+    backgroundColor: "#ECEFF3",
     gap: 12,
     padding: 20
   },
   title: {
-    color: "#f8fbff",
+    color: "#111827",
     fontSize: 22,
     fontWeight: "900",
     textAlign: "center"
   },
   link: {
-    color: "#ff9e54",
+    color: "#FF6A00",
     fontWeight: "700"
   }
 });

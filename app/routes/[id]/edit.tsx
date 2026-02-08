@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, StyleSheet, Text, View } from "react-native";
 import MapView, { MapPressEvent, Marker, Polyline } from "react-native-maps";
 
@@ -22,9 +22,11 @@ export default function RouteEditScreen() {
   const [route, setRoute] = useState<RouteItem | null>(null);
   const [points, setPoints] = useState<DraftPoint[]>([]);
   const [snappedPreview, setSnappedPreview] = useState<DraftPoint[] | null>(null);
+  const [snapError, setSnapError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [snapping, setSnapping] = useState(false);
+  const snapRequestRef = useRef(0);
 
   const load = useCallback(async () => {
     if (!routeId) {
@@ -47,38 +49,57 @@ export default function RouteEditScreen() {
     load();
   }, [load]);
 
+  const runSnapPreview = useCallback(async (basePoints: DraftPoint[]) => {
+    if (basePoints.length < 2) {
+      setSnappedPreview(null);
+      setSnapError(null);
+      return;
+    }
+
+    const requestId = ++snapRequestRef.current;
+    setSnapping(true);
+    try {
+      const snapped = await buildRoadSnappedPolyline(basePoints);
+      if (snapRequestRef.current === requestId) {
+        setSnappedPreview(snapped);
+        setSnapError(null);
+      }
+    } catch (error) {
+      const message = String(error);
+      console.error("No se pudo ajustar trazado al vuelo:", error);
+      if (snapRequestRef.current === requestId) {
+        setSnapError(message);
+      }
+    } finally {
+      if (snapRequestRef.current === requestId) {
+        setSnapping(false);
+      }
+    }
+  }, []);
+
   const onMapPress = (event: MapPressEvent) => {
     const { latitude, longitude } = event.nativeEvent.coordinate;
-    setPoints((current) => [...current, { lat: latitude, lng: longitude }]);
-    setSnappedPreview(null);
+    const next = [...points, { lat: latitude, lng: longitude }];
+    setPoints(next);
+    runSnapPreview(next);
   };
 
   const onUndo = () => {
-    setPoints((current) => current.slice(0, -1));
-    setSnappedPreview(null);
+    const next = points.slice(0, -1);
+    setPoints(next);
+    runSnapPreview(next);
   };
 
   const onClear = () => {
     setPoints([]);
     setSnappedPreview(null);
+    setSnapError(null);
+    setSnapping(false);
   };
 
   const onSnapPreview = async () => {
-    if (points.length < 2) {
-      Alert.alert("Minimo 2 puntos", "Necesitas al menos 2 puntos para ajustar a carretera.");
-      return;
-    }
-
-    setSnapping(true);
-    try {
-      const snapped = await buildRoadSnappedPolyline(points);
-      setSnappedPreview(snapped);
-    } catch (error) {
-      Alert.alert("No se pudo ajustar", "No pude calcular la carretera con el servicio de rutas.");
-      console.error(error);
-    } finally {
-      setSnapping(false);
-    }
+    if (points.length < 2) return;
+    await runSnapPreview(points);
   };
 
   const onSave = async () => {
@@ -124,6 +145,7 @@ export default function RouteEditScreen() {
           <Text style={styles.subtitle}>
             Toca el mapa para anadir puntos en orden sobre la carretera. Puntos: {points.length}
           </Text>
+          {snapError ? <Text style={styles.snapError}>Error de ajuste: {snapError}</Text> : null}
         </Card>
 
         {loading || !region ? (
@@ -131,7 +153,7 @@ export default function RouteEditScreen() {
             <Text style={styles.loading}>Cargando mapa...</Text>
           </Card>
         ) : (
-          <MapView style={styles.map} initialRegion={region} onPress={onMapPress}>
+          <MapView mapType="standard" style={styles.map} initialRegion={region} onPress={onMapPress}>
             <Marker coordinate={{ latitude: route!.start_lat, longitude: route!.start_lng }} title="Inicio de ruta" pinColor="#ff6d00" />
             {points.map((point, index) => (
               <Marker
@@ -141,12 +163,9 @@ export default function RouteEditScreen() {
                 pinColor="#3a86ff"
               />
             ))}
-            {points.length > 1 ? (
-              <Polyline coordinates={points.map((point) => ({ latitude: point.lat, longitude: point.lng }))} strokeColor="#ff9e54" strokeWidth={4} />
-            ) : null}
-            {snappedPreview && snappedPreview.length > 1 ? (
+            {(snappedPreview ?? points).length > 1 ? (
               <Polyline
-                coordinates={snappedPreview.map((point) => ({ latitude: point.lat, longitude: point.lng }))}
+                coordinates={(snappedPreview ?? points).map((point) => ({ latitude: point.lat, longitude: point.lng }))}
                 strokeColor="#2a9d8f"
                 strokeWidth={4}
               />
@@ -155,9 +174,9 @@ export default function RouteEditScreen() {
         )}
 
         <View style={styles.actions}>
-          <AppButton label="Deshacer ultimo" variant="secondary" onPress={onUndo} disabled={points.length === 0 || saving} />
+          <AppButton label="Borrar ultimo punto" variant="secondary" onPress={onUndo} disabled={points.length === 0 || saving} />
           <AppButton label="Borrar todo" variant="danger" onPress={onClear} disabled={points.length === 0 || saving} />
-          <AppButton label="Ajustar a carretera" variant="secondary" onPress={onSnapPreview} loading={snapping} disabled={saving} />
+          <AppButton label="Recalcular ajuste" variant="secondary" onPress={onSnapPreview} loading={snapping} disabled={saving} />
           <AppButton label="Guardar trazado" onPress={onSave} loading={saving} />
         </View>
       </View>
@@ -175,15 +194,19 @@ const styles = StyleSheet.create({
     gap: 6
   },
   title: {
-    color: "#f8fbff",
+    color: "#111827",
     fontWeight: "900",
     fontSize: 21
   },
   subtitle: {
-    color: "#c5d7ea"
+    color: "#4B5563"
+  },
+  snapError: {
+    color: "#ff6d6d",
+    fontSize: 12
   },
   loading: {
-    color: "#f8fbff"
+    color: "#111827"
   },
   map: {
     flex: 1,

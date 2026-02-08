@@ -13,6 +13,9 @@ type ApiErrorBody = {
   message?: string;
 };
 
+const apiTimeoutRaw = Number(process.env.EXPO_PUBLIC_API_TIMEOUT_MS ?? 12000);
+const apiTimeoutMs = Number.isFinite(apiTimeoutRaw) && apiTimeoutRaw > 0 ? apiTimeoutRaw : 12000;
+
 function ensureApiBaseUrl(): string {
   if (!env.apiBaseUrl) {
     throw new Error("Falta EXPO_PUBLIC_API_URL en el entorno.");
@@ -31,8 +34,6 @@ function buildUrl(path: string): string {
 }
 
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
-  const url = buildUrl(path);
-
   const headers: Record<string, string> = {
     Accept: "application/json"
   };
@@ -51,14 +52,46 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, {
-    method: options.method ?? "GET",
-    headers,
-    body
-  });
+  const url = buildUrl(path);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), apiTimeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: options.method ?? "GET",
+      headers,
+      body,
+      signal: controller.signal
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.toLowerCase().includes("abort")) {
+      throw new Error(`REQUEST_TIMEOUT_${apiTimeoutMs}MS`);
+    }
+    throw new Error(`NETWORK_ERROR: ${message}`);
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const text = await response.text();
-  const payload = text ? (JSON.parse(text) as T & ApiErrorBody) : ({} as T & ApiErrorBody);
+  let payload: T & ApiErrorBody = {} as T & ApiErrorBody;
+  if (text) {
+    try {
+      payload = JSON.parse(text) as T & ApiErrorBody;
+    } catch {
+      if (!response.ok) {
+        const preview = text.trim().slice(0, 120);
+        throw new Error(
+          `HTTP_${response.status} ${url}: respuesta no JSON del servidor${preview ? ` (${preview})` : ""}`
+        );
+      }
+      const preview = text.trim().slice(0, 120);
+      throw new Error(
+        `Respuesta invalida del servidor en ${url} (no es JSON)${preview ? ` (${preview})` : ""}`
+      );
+    }
+  }
 
   if (!response.ok) {
     const message = payload.error ?? payload.message ?? `HTTP_${response.status}`;
