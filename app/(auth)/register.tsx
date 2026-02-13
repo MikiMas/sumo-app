@@ -26,7 +26,7 @@ export default function RegisterScreen() {
     setLoading(true);
     try {
       await signUp(email.trim(), password, username.trim());
-      router.replace("/(tabs)/home");
+      router.replace("/(tabs)/routes");
     } catch (error) {
       Alert.alert("No se pudo registrar", String(error));
     } finally {

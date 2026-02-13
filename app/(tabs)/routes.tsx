@@ -1,21 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
-import MapView, { Marker, Polyline, Region } from "react-native-maps";
+import { Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import MapView, { Marker, Polyline, Region, UserLocationChangeEvent } from "react-native-maps";
 
 import { AppButton, Card, MapShimmer, Screen } from "@/components/ui";
 import { ensureForegroundLocationPermission, getCurrentPosition } from "@/lib/location";
+import { useAuth } from "@/providers/AuthProvider";
+import { GarageBike, fetchGarage } from "@/services/garage";
 import { theme } from "@/lib/theme";
-import {
-  RouteItem,
-  RoutePoint,
-  SpotPresenceMember,
-  checkInRoutePresence,
-  fetchRoutePoints,
-  fetchRoutePresence,
-  fetchRoutes
-} from "@/services/routes";
+import { RouteItem, RoutePoint, checkInRoutePresence, fetchRoutePoints, fetchRoutePresence, fetchRoutes } from "@/services/routes";
 
 type LatLng = { lat: number; lng: number };
 
@@ -26,10 +20,12 @@ const DEFAULT_REGION: Region = {
   latitudeDelta: 0.12,
   longitudeDelta: 0.12
 };
+const EARTH_RADIUS_M = 6371000;
+const AUTO_DETECT_RADIUS_M = 260;
+const AUTO_DETECT_INTERVAL_MS = 12000;
+const DECLINE_SNOOZE_MS = 20 * 60 * 1000;
+const SUCCESS_SNOOZE_MS = 2 * 60 * 60 * 1000;
 
-const SUGGEST_RADIUS_METERS = 180;
-const MAX_ROUTE_LAT_DELTA = 0.2;
-const MAX_PRESENCE_PREFETCH = 18;
 const MARKER_XL = require("../../assets/map/marker-framed-xl.png");
 const CLEAN_MAP_STYLE = [
   { elementType: "labels", stylers: [{ visibility: "off" }] },
@@ -52,74 +48,56 @@ function toRad(value: number) {
   return (value * Math.PI) / 180;
 }
 
-function distanceMeters(a: LatLng, b: LatLng) {
-  const earthRadius = 6371000;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * earthRadius * Math.asin(Math.sqrt(h));
-}
+function distanceMeters(aLat: number, aLng: number, bLat: number, bLng: number) {
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const lat1 = toRad(aLat);
+  const lat2 = toRad(bLat);
 
-function toMapCoordinate(point: { lat: unknown; lng: unknown }) {
-  return {
-    latitude: Number(point.lat),
-    longitude: Number(point.lng)
-  };
+  const sinLat = Math.sin(dLat / 2);
+  const sinLng = Math.sin(dLng / 2);
+  const hav = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLng * sinLng;
+  return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(hav)));
 }
 
 export default function RoutesScreen() {
+  const { user } = useAuth();
   const [routes, setRoutes] = useState<RouteItem[]>([]);
   const [selectedRoute, setSelectedRoute] = useState<RouteItem | null>(null);
   const [selectedRoutePoints, setSelectedRoutePoints] = useState<RoutePoint[]>([]);
   const [presenceCount, setPresenceCount] = useState<number | null>(null);
-  const [presenceMembers, setPresenceMembers] = useState<SpotPresenceMember[]>([]);
-  const [routePresenceCounts, setRoutePresenceCounts] = useState<Record<string, number>>({});
-  const [mapCenter, setMapCenter] = useState<LatLng>(DEFAULT_CENTER);
   const [visibleRegion, setVisibleRegion] = useState<Region>(DEFAULT_REGION);
-  const [loading, setLoading] = useState(false);
-  const [loadingRoutePath, setLoadingRoutePath] = useState(false);
   const [loadingPresence, setLoadingPresence] = useState(false);
-  const [checkingIn, setCheckingIn] = useState(false);
   const [mapReady, setMapReady] = useState(false);
+  const [nearbyPromptRoute, setNearbyPromptRoute] = useState<RouteItem | null>(null);
+  const [confirmNearbyModalOpen, setConfirmNearbyModalOpen] = useState(false);
+  const [bikePickerModalOpen, setBikePickerModalOpen] = useState(false);
+  const [garageBikes, setGarageBikes] = useState<GarageBike[]>([]);
+  const [loadingGarage, setLoadingGarage] = useState(false);
+  const [checkingInNearby, setCheckingInNearby] = useState(false);
+  const [selectedBikeId, setSelectedBikeId] = useState<string | null>(null);
   const mapRef = useRef<MapView | null>(null);
-  const promptedRouteRef = useRef<string | null>(null);
+  const lastDetectionAtRef = useRef(0);
+  const promptSnoozeRef = useRef<Record<string, number>>({});
+  const detectingRef = useRef(false);
 
-  const canRenderRoutes = visibleRegion.latitudeDelta <= MAX_ROUTE_LAT_DELTA;
-
-  const visibleRoutes = useMemo(() => {
-    if (!canRenderRoutes) {
-      return [];
-    }
-    return routes.filter((route) => isInRegion(route, visibleRegion));
-  }, [canRenderRoutes, routes, visibleRegion]);
-
-  const visibleRidersTotal = useMemo(
-    () => visibleRoutes.reduce((acc, route) => acc + (routePresenceCounts[route.id] ?? 0), 0),
-    [routePresenceCounts, visibleRoutes]
+  const visibleRoutes = useMemo(() => routes.filter((route) => isInRegion(route, visibleRegion)), [routes, visibleRegion]);
+  const selectedRoutePolyline = useMemo(
+    () =>
+      selectedRoutePoints.map((point) => ({
+        latitude: point.lat,
+        longitude: point.lng
+      })),
+    [selectedRoutePoints]
   );
 
-  const missingVisiblePresenceIds = useMemo(() => {
-    if (!canRenderRoutes) {
-      return [] as string[];
-    }
-
-    return visibleRoutes
-      .map((route) => route.id)
-      .filter((id) => routePresenceCounts[id] == null)
-      .slice(0, MAX_PRESENCE_PREFETCH);
-  }, [canRenderRoutes, routePresenceCounts, visibleRoutes]);
-
   const load = useCallback(async () => {
-    setLoading(true);
     try {
       const list = await fetchRoutes();
       setRoutes(list);
     } catch (error) {
-      console.error("Error cargando rutas:", error);
-    } finally {
-      setLoading(false);
+      console.error("Error cargando spots:", error);
+      Alert.alert("Error", "No se pudieron cargar los spots.");
     }
   }, []);
 
@@ -131,7 +109,7 @@ export default function RoutesScreen() {
         latitudeDelta: 0.02,
         longitudeDelta: 0.02
       },
-      350
+      300
     );
   }, []);
 
@@ -140,11 +118,8 @@ export default function RoutesScreen() {
     try {
       const presence = await fetchRoutePresence(routeId);
       setPresenceCount(presence.count);
-      setPresenceMembers(presence.members ?? []);
-      setRoutePresenceCounts((current) => ({ ...current, [routeId]: presence.count }));
     } catch {
       setPresenceCount(null);
-      setPresenceMembers([]);
     } finally {
       setLoadingPresence(false);
     }
@@ -153,63 +128,166 @@ export default function RoutesScreen() {
   const onSelectRoute = useCallback(
     async (route: RouteItem) => {
       setSelectedRoute(route);
-      setLoadingRoutePath(true);
       animateToRoute(route);
-
-      try {
-        const points = await fetchRoutePoints(route.id);
-        setSelectedRoutePoints(points);
-        if (points.length > 1) {
-          const coords = points.map(toMapCoordinate).filter((c) => Number.isFinite(c.latitude) && Number.isFinite(c.longitude));
-          if (coords.length > 1) {
-            mapRef.current?.fitToCoordinates(coords, {
-              edgePadding: { top: 90, right: 70, bottom: 180, left: 70 },
-              animated: true
-            });
-          }
-        }
-      } catch (error) {
-        console.error("Error cargando trazado de ruta:", error);
-        setSelectedRoutePoints([]);
-      } finally {
-        setLoadingRoutePath(false);
-      }
-
+      const points = await fetchRoutePoints(route.id).catch((error) => {
+        console.error("Error cargando trazada del spot:", error);
+        return [];
+      });
+      setSelectedRoutePoints(points);
       await loadPresence(route.id);
     },
     [animateToRoute, loadPresence]
   );
 
-  const onCheckIn = useCallback(async () => {
-    if (!selectedRoute || checkingIn) {
-      return;
-    }
-
-    setCheckingIn(true);
-    try {
-      await checkInRoutePresence(selectedRoute.id, null);
-      await loadPresence(selectedRoute.id);
-      Alert.alert("Marcado", "Ya apareces en este spot.");
-    } catch (error) {
-      Alert.alert("No se pudo marcar presencia", String(error));
-    } finally {
-      setCheckingIn(false);
-    }
-  }, [checkingIn, loadPresence, selectedRoute]);
-
   const onClearSelection = useCallback(() => {
     setSelectedRoute(null);
     setSelectedRoutePoints([]);
     setPresenceCount(null);
-    setPresenceMembers([]);
   }, []);
 
   const onRefresh = useCallback(async () => {
     await load();
     if (selectedRoute) {
+      const points = await fetchRoutePoints(selectedRoute.id).catch(() => []);
+      setSelectedRoutePoints(points);
       await loadPresence(selectedRoute.id);
     }
   }, [load, loadPresence, selectedRoute]);
+
+  const loadGarageBikes = useCallback(async () => {
+    if (!user?.id) {
+      setGarageBikes([]);
+      return [];
+    }
+
+    setLoadingGarage(true);
+    try {
+      const bikes = await fetchGarage(user.id);
+      setGarageBikes(bikes);
+      return bikes;
+    } catch (error) {
+      Alert.alert("Error", `No se pudo cargar tu garaje: ${String(error)}`);
+      return [];
+    } finally {
+      setLoadingGarage(false);
+    }
+  }, [user?.id]);
+
+  const closeNearbyPrompt = useCallback(
+    (routeId?: string, snoozeMs = DECLINE_SNOOZE_MS) => {
+      if (routeId) {
+        promptSnoozeRef.current[routeId] = Date.now() + snoozeMs;
+      }
+      setConfirmNearbyModalOpen(false);
+      setBikePickerModalOpen(false);
+      setNearbyPromptRoute(null);
+      setSelectedBikeId(null);
+    },
+    []
+  );
+
+  const onConfirmNearby = useCallback(async () => {
+    if (!nearbyPromptRoute) {
+      return;
+    }
+
+    setConfirmNearbyModalOpen(false);
+    const bikes = await loadGarageBikes();
+    if (bikes.length > 0) {
+      setSelectedBikeId(bikes[0]?.id ?? null);
+    } else {
+      setSelectedBikeId(null);
+    }
+    setBikePickerModalOpen(true);
+  }, [loadGarageBikes, nearbyPromptRoute]);
+
+  const onCheckInNearby = useCallback(async () => {
+    if (!nearbyPromptRoute || checkingInNearby) {
+      return;
+    }
+
+    setCheckingInNearby(true);
+    try {
+      await checkInRoutePresence(nearbyPromptRoute.id, selectedBikeId);
+      promptSnoozeRef.current[nearbyPromptRoute.id] = Date.now() + SUCCESS_SNOOZE_MS;
+      setBikePickerModalOpen(false);
+      setNearbyPromptRoute(null);
+      setSelectedBikeId(null);
+      await loadPresence(nearbyPromptRoute.id);
+      Alert.alert("Listo", "Te hemos marcado en este spot.");
+    } catch (error) {
+      Alert.alert("No se pudo marcar presencia", String(error));
+    } finally {
+      setCheckingInNearby(false);
+    }
+  }, [checkingInNearby, loadPresence, nearbyPromptRoute, selectedBikeId]);
+
+  const detectNearbySpot = useCallback(
+    async (lat: number, lng: number) => {
+      if (!routes.length || confirmNearbyModalOpen || bikePickerModalOpen || checkingInNearby || !user?.id) {
+        return;
+      }
+
+      let nearestRoute: RouteItem | null = null;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+      for (const route of routes) {
+        const meters = distanceMeters(lat, lng, route.start_lat, route.start_lng);
+        if (meters < nearestDistance) {
+          nearestDistance = meters;
+          nearestRoute = route;
+        }
+      }
+
+      if (!nearestRoute || nearestDistance > AUTO_DETECT_RADIUS_M) {
+        return;
+      }
+
+      const snoozeUntil = promptSnoozeRef.current[nearestRoute.id] ?? 0;
+      if (Date.now() < snoozeUntil) {
+        return;
+      }
+
+      try {
+        const presence = await fetchRoutePresence(nearestRoute.id);
+        const alreadyInSpot = (presence.members ?? []).some((member) => member.user_id === user.id);
+        if (alreadyInSpot) {
+          promptSnoozeRef.current[nearestRoute.id] = Date.now() + SUCCESS_SNOOZE_MS;
+          return;
+        }
+      } catch {
+        // keep silent here to avoid spamming alerts from passive detection
+      }
+
+      setNearbyPromptRoute(nearestRoute);
+      setConfirmNearbyModalOpen(true);
+      setSelectedBikeId(null);
+    },
+    [bikePickerModalOpen, checkingInNearby, confirmNearbyModalOpen, routes, user?.id]
+  );
+
+  const onUserLocationChange = useCallback(
+    (event: UserLocationChangeEvent) => {
+      const coords = event.nativeEvent.coordinate;
+      if (!coords) {
+        return;
+      }
+
+      const now = Date.now();
+      if (now - lastDetectionAtRef.current < AUTO_DETECT_INTERVAL_MS) {
+        return;
+      }
+      if (detectingRef.current) {
+        return;
+      }
+
+      lastDetectionAtRef.current = now;
+      detectingRef.current = true;
+      void detectNearbySpot(coords.latitude, coords.longitude).finally(() => {
+        detectingRef.current = false;
+      });
+    },
+    [detectNearbySpot]
+  );
 
   useEffect(() => {
     load();
@@ -230,16 +308,14 @@ export default function RoutesScreen() {
           return;
         }
 
-        const nextCenter = { lat: coords.latitude, lng: coords.longitude };
-        setMapCenter(nextCenter);
         const nextRegion: Region = {
-          latitude: nextCenter.lat,
-          longitude: nextCenter.lng,
+          latitude: coords.latitude,
+          longitude: coords.longitude,
           latitudeDelta: 0.08,
           longitudeDelta: 0.08
         };
         setVisibleRegion(nextRegion);
-        mapRef.current?.animateToRegion(nextRegion, 400);
+        mapRef.current?.animateToRegion(nextRegion, 350);
       } catch {
         // fallback center
       }
@@ -252,86 +328,11 @@ export default function RoutesScreen() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!missingVisiblePresenceIds.length) {
-      return;
-    }
-
-    let cancelled = false;
-
-    (async () => {
-      const entries = await Promise.all(
-        missingVisiblePresenceIds.map(async (routeId) => {
-          try {
-            const presence = await fetchRoutePresence(routeId);
-            return [routeId, presence.count] as const;
-          } catch {
-            return [routeId, 0] as const;
-          }
-        })
-      );
-
-      if (cancelled) {
-        return;
-      }
-
-      setRoutePresenceCounts((current) => {
-        const next = { ...current };
-        for (const [routeId, count] of entries) {
-          next[routeId] = count;
-        }
-        return next;
-      });
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [missingVisiblePresenceIds]);
-
-  useEffect(() => {
-    if (!routes.length) {
-      return;
-    }
-
-    const closest = routes
-      .map((route) => ({
-        route,
-        distance: distanceMeters(mapCenter, { lat: route.start_lat, lng: route.start_lng })
-      }))
-      .sort((a, b) => a.distance - b.distance)[0];
-
-    if (!closest || closest.distance > SUGGEST_RADIUS_METERS) {
-      return;
-    }
-
-    if (promptedRouteRef.current === closest.route.id) {
-      return;
-    }
-
-    promptedRouteRef.current = closest.route.id;
-    Alert.alert("Spot cercano", `Estas cerca de "${closest.route.title}". Quieres marcar que estas aqui?`, [
-      { text: "Ahora no", style: "cancel" },
-      {
-        text: "Si, marcar",
-        onPress: async () => {
-          await onSelectRoute(closest.route);
-          try {
-            await checkInRoutePresence(closest.route.id, null);
-            await loadPresence(closest.route.id);
-          } catch (error) {
-            console.error("No se pudo marcar presencia automatica:", error);
-          }
-        }
-      }
-    ]);
-  }, [loadPresence, mapCenter, onSelectRoute, routes]);
-
   return (
     <Screen>
       <View style={styles.header}>
         <View style={styles.buttonContainer}>
-          <AppButton label="Nueva" onPress={() => router.push("/routes/new")} variant="secondary" />
+          <AppButton label="Nuevo" onPress={() => router.push("/routes/new")} variant="secondary" />
         </View>
       </View>
 
@@ -342,6 +343,7 @@ export default function RoutesScreen() {
           style={styles.map}
           initialRegion={DEFAULT_REGION}
           onRegionChangeComplete={setVisibleRegion}
+          onUserLocationChange={onUserLocationChange}
           showsUserLocation
           showsMyLocationButton
           showsBuildings={false}
@@ -352,22 +354,27 @@ export default function RoutesScreen() {
           customMapStyle={CLEAN_MAP_STYLE}
           onMapReady={() => setMapReady(true)}
         >
-          {canRenderRoutes
-            ? visibleRoutes.map((route) => (
-                <Marker
-                  key={route.id}
-                  coordinate={{ latitude: route.start_lat, longitude: route.start_lng }}
-                  onPress={() => onSelectRoute(route)}
-                  anchor={{ x: 0.5, y: 1 }}
-                  image={MARKER_XL}
-                  tracksViewChanges={false}
-                />
-              ))
-            : null}
-
-          {selectedRoutePoints.length > 1 ? (
-            <Polyline coordinates={selectedRoutePoints.map(toMapCoordinate)} strokeColor="#FF6A00" strokeWidth={4} />
+          {selectedRoutePolyline.length > 1 ? (
+            <Polyline
+              coordinates={selectedRoutePolyline}
+              strokeColor={theme.colors.primary}
+              strokeWidth={4}
+              lineCap="round"
+              lineJoin="round"
+              geodesic
+            />
           ) : null}
+
+          {visibleRoutes.map((route) => (
+            <Marker
+              key={route.id}
+              coordinate={{ latitude: route.start_lat, longitude: route.start_lng }}
+              onPress={() => onSelectRoute(route)}
+              anchor={{ x: 0.5, y: 1 }}
+              image={MARKER_XL}
+              tracksViewChanges={false}
+            />
+          ))}
         </MapView>
 
         {!mapReady ? (
@@ -380,67 +387,140 @@ export default function RoutesScreen() {
           <Pressable onPress={onRefresh} style={styles.refreshIconBtn}>
             <Ionicons name="refresh" size={20} color="#111827" />
           </Pressable>
-          <View style={styles.topStatsCard}>
-            <Text style={styles.topStatsText}>Rutas visibles: {canRenderRoutes ? visibleRoutes.length : "-"}</Text>
-            <Text style={styles.topStatsText}>Riders visibles: {canRenderRoutes ? visibleRidersTotal : "-"}</Text>
-            {!canRenderRoutes ? <Text style={styles.topStatsHint}>Acerca el zoom para cargar rutas</Text> : null}
-          </View>
         </View>
 
         {selectedRoute ? (
           <View style={styles.overlay}>
             <Card style={styles.overlayCard}>
               <View style={styles.selectedOverlayHead}>
-                <View style={styles.selectedTitleWrap}>
-                  <Text style={styles.overlayTitle}>{selectedRoute.title}</Text>
-                  <View style={styles.selectedKmBadge}>
-                    <Text style={styles.selectedKmBadgeText}>
-                      {selectedRoute.distance_km != null ? `${selectedRoute.distance_km} km` : "spot"}
-                    </Text>
-                  </View>
-                </View>
+                <Text style={styles.overlayTitle}>{selectedRoute.title}</Text>
                 <Pressable onPress={onClearSelection} style={styles.closeBtn}>
                   <Ionicons name="close" size={16} color="#111827" />
                 </Pressable>
               </View>
 
-              <Text style={styles.overlayMeta}>
-                Distancia: {selectedRoute.distance_km ?? "-"} km - {loadingRoutePath ? "cargando trazado" : "trazado listo"}
-              </Text>
-              <Text style={styles.overlayMeta}>
-                Gente en este spot: {loadingPresence ? "..." : presenceCount != null ? presenceCount : "--"}
-              </Text>
-
-              {presenceMembers.length > 0 ? (
-                <View style={styles.members}>
-                  {presenceMembers.slice(0, 4).map((member) => (
-                    <Text key={`${member.user_id}-${member.checked_in_at}`} style={styles.memberText}>
-                      @{member.username ?? "rider"} - {member.bike_brand ?? "-"} {member.bike_model ?? ""}
-                    </Text>
-                  ))}
-                </View>
-              ) : null}
-
-              <View style={styles.overlayActions}>
-                <Pressable onPress={() => router.push(`/routes/${selectedRoute.id}`)} style={styles.actionBtn}>
-                  <Text style={styles.actionBtnText}>Ver ruta</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => {
-                    animateToRoute(selectedRoute);
-                  }}
-                  style={styles.actionBtn}
-                >
-                  <Text style={styles.actionBtnText}>Zoom spot</Text>
-                </Pressable>
-                <Pressable onPress={onCheckIn} style={[styles.actionBtn, checkingIn && styles.actionBtnDisabled]} disabled={checkingIn}>
-                  <Text style={styles.actionBtnText}>{checkingIn ? "Marcando" : "Estoy aqui"}</Text>
-                </Pressable>
+              <View style={styles.presenceInline}>
+                <Ionicons name="person" size={15} color="#111827" />
+                <Text style={styles.presenceCount}>{loadingPresence ? "..." : presenceCount != null ? String(presenceCount) : "--"}</Text>
               </View>
+
+              <Pressable onPress={() => router.push(`/routes/${selectedRoute.id}`)} style={styles.actionBtn}>
+                <Text style={styles.actionBtnText}>Ver spot</Text>
+              </Pressable>
             </Card>
           </View>
         ) : null}
       </Card>
+
+      <Modal visible={confirmNearbyModalOpen} transparent animationType="fade" onRequestClose={() => closeNearbyPrompt(nearbyPromptRoute?.id)}>
+        <View style={styles.modalBackdrop}>
+          <Card style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Estas en este spot?</Text>
+              <Pressable onPress={() => closeNearbyPrompt(nearbyPromptRoute?.id)} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={16} color="#111827" />
+              </Pressable>
+            </View>
+
+            <Text style={styles.modalRouteName}>{nearbyPromptRoute?.title ?? "Spot"}</Text>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={styles.modalActionLight}
+                onPress={() => closeNearbyPrompt(nearbyPromptRoute?.id)}
+                accessibilityRole="button"
+                accessibilityLabel="No"
+              >
+                <Text style={styles.modalActionLightText}>No</Text>
+              </Pressable>
+              <Pressable
+                style={styles.modalActionDark}
+                onPress={onConfirmNearby}
+                accessibilityRole="button"
+                accessibilityLabel="Si"
+              >
+                <Text style={styles.modalActionDarkText}>Si</Text>
+              </Pressable>
+            </View>
+          </Card>
+        </View>
+      </Modal>
+
+      <Modal visible={bikePickerModalOpen} transparent animationType="slide" onRequestClose={() => closeNearbyPrompt(nearbyPromptRoute?.id)}>
+        <View style={styles.modalBackdropBottom}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => closeNearbyPrompt(nearbyPromptRoute?.id)} />
+          <Card style={styles.modalCardBottom}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Con que moto estas?</Text>
+              <Pressable onPress={() => closeNearbyPrompt(nearbyPromptRoute?.id)} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={16} color="#111827" />
+              </Pressable>
+            </View>
+
+            {loadingGarage ? (
+              <Text style={styles.modalHint}>Cargando garaje...</Text>
+            ) : (
+              <ScrollView style={styles.bikePickerList} contentContainerStyle={styles.bikePickerContent}>
+                <Pressable
+                  style={[styles.bikeOption, selectedBikeId == null && styles.bikeOptionActive]}
+                  onPress={() => setSelectedBikeId(null)}
+                >
+                  <View style={styles.bikeOptionImageFallback}>
+                    <Ionicons name="walk-outline" size={18} color="#111827" />
+                  </View>
+                  <View style={styles.bikeOptionMeta}>
+                    <Text style={styles.bikeOptionTitle}>Sin moto</Text>
+                  </View>
+                  {selectedBikeId == null ? <Ionicons name="checkmark" size={16} color="#111827" /> : null}
+                </Pressable>
+
+                {garageBikes.map((bike) => (
+                  <Pressable
+                    key={bike.id}
+                    style={[styles.bikeOption, selectedBikeId === bike.id && styles.bikeOptionActive]}
+                    onPress={() => setSelectedBikeId(bike.id)}
+                  >
+                    {bike.photo_url ? (
+                      <Image source={{ uri: bike.photo_url }} style={styles.bikeOptionImage} />
+                    ) : (
+                      <View style={styles.bikeOptionImageFallback}>
+                        <Ionicons name="bicycle-outline" size={18} color="#111827" />
+                      </View>
+                    )}
+                    <View style={styles.bikeOptionMeta}>
+                      <Text style={styles.bikeOptionTitle}>
+                        {bike.brand} {bike.model}
+                      </Text>
+                      <Text style={styles.bikeOptionSub}>{bike.year ? String(bike.year) : "Anio -"}</Text>
+                    </View>
+                    {selectedBikeId === bike.id ? <Ionicons name="checkmark" size={16} color="#111827" /> : null}
+                  </Pressable>
+                ))}
+              </ScrollView>
+            )}
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={styles.modalActionLight}
+                onPress={() => closeNearbyPrompt(nearbyPromptRoute?.id)}
+                accessibilityRole="button"
+                accessibilityLabel="Cancelar"
+              >
+                <Ionicons name="close" size={18} color="#111827" />
+              </Pressable>
+              <Pressable
+                style={[styles.modalActionDark, checkingInNearby && styles.modalActionDisabled]}
+                onPress={onCheckInNearby}
+                disabled={checkingInNearby}
+                accessibilityRole="button"
+                accessibilityLabel="Confirmar moto"
+              >
+                <Ionicons name={checkingInNearby ? "hourglass-outline" : "checkmark"} size={18} color="#FFFFFF" />
+              </Pressable>
+            </View>
+          </Card>
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -468,11 +548,9 @@ const styles = StyleSheet.create({
   topMapBar: {
     position: "absolute",
     left: 10,
-    right: 10,
     top: 10,
     flexDirection: "row",
-    alignItems: "stretch",
-    gap: 8
+    alignItems: "center"
   },
   refreshIconBtn: {
     width: 44,
@@ -489,31 +567,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     elevation: 4
   },
-  topStatsCard: {
-    flex: 1,
-    minHeight: 44,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#E4E8EE",
-    backgroundColor: "#FFFFFF",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    shadowColor: "#7A8594",
-    shadowOpacity: 0.16,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
-    justifyContent: "center"
-  },
-  topStatsText: {
-    color: "#111827",
-    fontSize: 12
-  },
-  topStatsHint: {
-    color: "#FF6A00",
-    fontSize: 11,
-    marginTop: 2
-  },
   overlay: {
     position: "absolute",
     left: 10,
@@ -521,7 +574,7 @@ const styles = StyleSheet.create({
     bottom: 90
   },
   overlayCard: {
-    gap: 7
+    gap: 10
   },
   selectedOverlayHead: {
     flexDirection: "row",
@@ -529,28 +582,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 8
   },
-  selectedTitleWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    flex: 1,
-    marginRight: 8
-  },
   overlayTitle: {
     color: "#111827",
-    fontSize: 16
-  },
-  selectedKmBadge: {
-    backgroundColor: "#FFF1E7",
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#FFC9AA",
-    paddingHorizontal: 8,
-    paddingVertical: 4
-  },
-  selectedKmBadgeText: {
-    color: "#FF6A00",
-    fontSize: 11
+    fontSize: 18,
+    flex: 1
   },
   closeBtn: {
     width: 28,
@@ -560,30 +595,160 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center"
   },
-  overlayMeta: {
-    color: "#4B5563",
-    fontSize: 12
+  presenceInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6
   },
-  members: {
+  presenceCount: {
+    color: "#111827",
+    fontSize: 16
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(17,24,39,0.32)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16
+  },
+  modalBackdropBottom: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(17,24,39,0.32)",
+    paddingHorizontal: 14,
+    paddingBottom: 14
+  },
+  modalCard: {
+    width: "100%",
+    gap: 12
+  },
+  modalCardBottom: {
+    width: "100%",
+    maxHeight: "72%",
+    gap: 10
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  modalTitle: {
+    color: "#111827",
+    fontSize: 19
+  },
+  modalRouteName: {
+    color: "#111827",
+    fontSize: 15
+  },
+  modalCloseBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 999,
+    backgroundColor: "#F4F6FA",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  modalHint: {
+    color: "#6B7280",
+    fontSize: 13
+  },
+  bikePickerList: {
+    maxHeight: 320
+  },
+  bikePickerContent: {
+    gap: 8,
+    paddingBottom: 4
+  },
+  bikeOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 11,
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 10,
+    paddingVertical: 9
+  },
+  bikeOptionActive: {
+    borderColor: "#111827",
+    backgroundColor: "#F3F4F6"
+  },
+  bikeOptionImage: {
+    width: 66,
+    height: 48,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    backgroundColor: "#F3F4F6"
+  },
+  bikeOptionImageFallback: {
+    width: 66,
+    height: 48,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  bikeOptionMeta: {
+    flex: 1,
     gap: 2
   },
-  memberText: {
+  bikeOptionTitle: {
     color: "#111827",
+    fontSize: 15
+  },
+  bikeOptionSub: {
+    color: "#6B7280",
     fontSize: 12
   },
-  overlayActions: {
+  modalActions: {
     flexDirection: "row",
-    gap: 8,
-    marginTop: 4
+    justifyContent: "flex-end",
+    alignItems: "center",
+    gap: 8
+  },
+  modalActionLight: {
+    minHeight: 38,
+    minWidth: 54,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14
+  },
+  modalActionDark: {
+    minHeight: 38,
+    minWidth: 54,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#111827",
+    backgroundColor: "#111827",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 14
+  },
+  modalActionLightText: {
+    color: "#111827",
+    fontSize: 13
+  },
+  modalActionDarkText: {
+    color: "#FFFFFF",
+    fontSize: 13
+  },
+  modalActionDisabled: {
+    opacity: 0.55
   },
   actionBtn: {
     backgroundColor: theme.colors.primary,
     borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8
-  },
-  actionBtnDisabled: {
-    backgroundColor: "#9CA3AF"
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    alignItems: "center"
   },
   actionBtnText: {
     color: theme.colors.white,

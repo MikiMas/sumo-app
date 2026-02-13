@@ -11,7 +11,7 @@ create table if not exists public.posts (
   id uuid primary key default gen_random_uuid(),
   author_id uuid not null references public.profiles(id) on delete cascade,
   body text not null check (char_length(body) between 1 and 2000),
-  route_id uuid null references public.routes(id) on delete set null,
+  route_id uuid not null references public.routes(id) on delete cascade,
   visibility text not null default 'public' check (visibility in ('public', 'followers', 'private')),
   created_at timestamptz not null default timezone('utc', now()),
   updated_at timestamptz not null default timezone('utc', now())

@@ -1,25 +1,45 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
-import { Alert, Image, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Stack, useLocalSearchParams } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { Card, Screen } from "@/components/ui";
 import { FeedPost, PublicProfile, fetchProfilePosts } from "@/services/feed";
+import { GarageBike, fetchProfileGarage } from "@/services/garage";
+
+const PAGE_WIDTH = Dimensions.get("window").width - 32;
 
 export default function PublicProfileScreen() {
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const profileId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const pagerRef = useRef<ScrollView | null>(null);
+
   const [profile, setProfile] = useState<PublicProfile | null>(null);
   const [posts, setPosts] = useState<FeedPost[]>([]);
+  const [garage, setGarage] = useState<GarageBike[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activePage, setActivePage] = useState(0);
+
+  const headerTitle = useMemo(() => {
+    if (!profile) {
+      return "Perfil";
+    }
+    return profile.display_name?.trim() || profile.username?.trim() || "Perfil";
+  }, [profile]);
 
   const load = useCallback(async () => {
     if (!profileId) return;
     setLoading(true);
     try {
-      const result = await fetchProfilePosts(profileId, 50, 0);
-      setProfile(result.profile);
-      setPosts(result.posts);
+      const [profileResult, garageResult] = await Promise.all([
+        fetchProfilePosts(profileId, 50, 0),
+        fetchProfileGarage(profileId)
+      ]);
+      setProfile(profileResult.profile);
+      setPosts(profileResult.posts ?? []);
+      setGarage(garageResult ?? []);
+      setActivePage(0);
+      pagerRef.current?.scrollTo({ x: 0, y: 0, animated: false });
     } catch (error) {
       Alert.alert("No se pudo cargar perfil", String(error));
     } finally {
@@ -31,76 +51,140 @@ export default function PublicProfileScreen() {
     load();
   }, [load]);
 
+  const onSelectPage = (page: number) => {
+    setActivePage(page);
+    pagerRef.current?.scrollTo({ x: page * PAGE_WIDTH, y: 0, animated: true });
+  };
+
   return (
     <Screen>
-      <ScrollView contentContainerStyle={styles.container}>
-        {loading ? (
-          <Card>
-            <Text style={styles.loadingText}>Cargando perfil...</Text>
-          </Card>
-        ) : !profile ? (
-          <Card>
-            <Text style={styles.loadingText}>Perfil no encontrado.</Text>
-          </Card>
-        ) : (
-          <>
-            <Card style={styles.headerCard}>
-              <View style={styles.topRow}>
-                <View style={styles.avatarWrap}>
-                  {profile.avatar_url ? (
-                    <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
-                  ) : (
-                    <Ionicons name="person" size={36} color="#FF6A00" />
-                  )}
-                </View>
-                <View style={styles.meta}>
-                  <Text style={styles.username}>@{profile.username ?? "rider"}</Text>
-                  {profile.display_name ? <Text style={styles.displayName}>{profile.display_name}</Text> : null}
-                  {profile.home_city ? <Text style={styles.city}>{profile.home_city}</Text> : null}
-                </View>
-              </View>
-              {profile.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
-            </Card>
+      <Stack.Screen options={{ title: headerTitle }} />
 
-            <Card style={styles.postsCard}>
-              <Text style={styles.postsTitle}>Publicaciones ({posts.length})</Text>
-              {posts.length === 0 ? (
-                <Text style={styles.emptyText}>No hay publicaciones aun.</Text>
-              ) : (
-                <View style={styles.postsList}>
-                  {posts.map((post) => {
+      {loading ? (
+        <Card>
+          <Text style={styles.loadingText}>Cargando perfil...</Text>
+        </Card>
+      ) : !profile ? (
+        <Card>
+          <Text style={styles.loadingText}>Perfil no encontrado.</Text>
+        </Card>
+      ) : (
+        <View style={styles.container}>
+          <Card style={styles.headerCard}>
+            <View style={styles.topRow}>
+              <View style={styles.avatarWrap}>
+                {profile.avatar_url ? (
+                  <Image source={{ uri: profile.avatar_url }} style={styles.avatar} />
+                ) : (
+                  <Ionicons name="person" size={34} color="#FF7A00" />
+                )}
+              </View>
+              <View style={styles.meta}>
+                <Text style={styles.username}>@{profile.username ?? "rider"}</Text>
+                {profile.display_name ? <Text style={styles.displayName}>{profile.display_name}</Text> : null}
+                {profile.home_city ? <Text style={styles.city}>{profile.home_city}</Text> : null}
+              </View>
+            </View>
+            {profile.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
+          </Card>
+
+          <View style={styles.pagesHeader}>
+            <Pressable
+              style={[styles.pageIconBtn, activePage === 0 && styles.pageIconBtnActive]}
+              onPress={() => onSelectPage(0)}
+              accessibilityRole="button"
+              accessibilityLabel="Ver garaje"
+            >
+              <Ionicons name="bicycle-outline" size={18} color={activePage === 0 ? "#FFFFFF" : "#111827"} />
+            </Pressable>
+            <Pressable
+              style={[styles.pageIconBtn, activePage === 1 && styles.pageIconBtnActive]}
+              onPress={() => onSelectPage(1)}
+              accessibilityRole="button"
+              accessibilityLabel="Ver publicaciones"
+            >
+              <Ionicons name="images-outline" size={18} color={activePage === 1 ? "#FFFFFF" : "#111827"} />
+            </Pressable>
+          </View>
+
+          <ScrollView
+            ref={pagerRef}
+            horizontal
+            pagingEnabled
+            style={styles.pager}
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={(event) => {
+              const page = Math.round(event.nativeEvent.contentOffset.x / PAGE_WIDTH);
+              setActivePage(Math.max(0, Math.min(page, 1)));
+            }}
+            contentContainerStyle={styles.pagerContent}
+          >
+            <View style={[styles.page, { width: PAGE_WIDTH }]}>
+              <ScrollView style={styles.pageScroll} contentContainerStyle={styles.pageScrollContent} showsVerticalScrollIndicator={false}>
+                {garage.length === 0 ? (
+                  <Card>
+                    <Text style={styles.emptyText}>Sin motos publicas.</Text>
+                  </Card>
+                ) : (
+                  garage.map((bike) => (
+                    <Card key={bike.id} style={styles.bikeCard}>
+                      <View style={styles.bikeRow}>
+                        {bike.photo_url ? (
+                          <Image source={{ uri: bike.photo_url }} style={styles.bikeImage} />
+                        ) : (
+                          <View style={styles.bikeImageFallback}>
+                            <Ionicons name="bicycle-outline" size={18} color="#FF7A00" />
+                          </View>
+                        )}
+                        <View style={styles.bikeMeta}>
+                          <Text style={styles.bikeTitle}>
+                            {bike.brand} {bike.model}
+                          </Text>
+                          <Text style={styles.bikeYear}>{bike.year ? String(bike.year) : "Año -"}</Text>
+                        </View>
+                      </View>
+                    </Card>
+                  ))
+                )}
+              </ScrollView>
+            </View>
+
+            <View style={[styles.page, { width: PAGE_WIDTH }]}>
+              <ScrollView style={styles.pageScroll} contentContainerStyle={styles.pageScrollContent} showsVerticalScrollIndicator={false}>
+                {posts.length === 0 ? (
+                  <Card>
+                    <Text style={styles.emptyText}>No hay publicaciones aun.</Text>
+                  </Card>
+                ) : (
+                  posts.map((post) => {
                     const first = post.post_media?.[0];
                     return (
-                      <View key={post.id} style={styles.postTile}>
+                      <Card key={post.id} style={styles.postCard}>
                         {first?.media_type === "image" ? (
                           <Image source={{ uri: first.media_url }} style={styles.postImage} />
                         ) : first?.media_type === "video" ? (
                           <View style={styles.videoTile}>
-                            <Ionicons name="videocam" size={18} color="#FF6A00" />
-                            <Text style={styles.videoText}>Video</Text>
+                            <Ionicons name="videocam" size={18} color="#FF7A00" />
                           </View>
                         ) : null}
                         <Text style={styles.postBody}>{post.body}</Text>
-                        <Text style={styles.postStats}>
-                          {post.likes_count} likes · {post.comments_count} comentarios
-                        </Text>
-                      </View>
+                      </Card>
                     );
-                  })}
-                </View>
-              )}
-            </Card>
-          </>
-        )}
-      </ScrollView>
+                  })
+                )}
+              </ScrollView>
+            </View>
+          </ScrollView>
+        </View>
+      )}
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    gap: 12,
-    paddingBottom: 24
+    flex: 1,
+    gap: 10
   },
   loadingText: {
     color: "#111827"
@@ -114,12 +198,12 @@ const styles = StyleSheet.create({
     gap: 12
   },
   avatarWrap: {
-    width: 86,
-    height: 86,
+    width: 84,
+    height: 84,
     borderRadius: 999,
     borderWidth: 2,
-    borderColor: "#FFC9AA",
-    backgroundColor: "#FFF4EC",
+    borderColor: "#22C55E",
+    backgroundColor: "#0F1113",
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden"
@@ -148,56 +232,106 @@ const styles = StyleSheet.create({
     color: "#4B5563",
     fontSize: 13
   },
-  postsCard: {
+  pagesHeader: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
     gap: 8
   },
-  postsTitle: {
+  pageIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#DDE3EC",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  pageIconBtnActive: {
+    backgroundColor: "#111827",
+    borderColor: "#111827"
+  },
+  pager: {
+    flex: 1
+  },
+  pagerContent: {
+    alignItems: "flex-start"
+  },
+  page: {
+    flex: 1
+  },
+  pageScroll: {
+    flex: 1
+  },
+  pageScrollContent: {
+    gap: 8,
+    paddingBottom: 110
+  },
+  bikeCard: {
+    padding: 10
+  },
+  bikeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10
+  },
+  bikeImage: {
+    width: 86,
+    height: 64,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#DDE3EC",
+    backgroundColor: "#F3F5F8"
+  },
+  bikeImageFallback: {
+    width: 86,
+    height: 64,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#22C55E",
+    backgroundColor: "#0F1113",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  bikeMeta: {
+    flex: 1,
+    gap: 3
+  },
+  bikeTitle: {
     color: "#111827",
     fontSize: 18
   },
-  emptyText: {
+  bikeYear: {
     color: "#6B7280",
-    fontSize: 13
+    fontSize: 12
   },
-  postsList: {
-    gap: 10
-  },
-  postTile: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#E6EAF1",
-    backgroundColor: "#FFFFFF",
-    padding: 8,
-    gap: 6
+  postCard: {
+    padding: 10,
+    gap: 8
   },
   postImage: {
     width: "100%",
-    height: 180,
-    borderRadius: 8,
+    height: 176,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: "#E6EAF1"
   },
   videoTile: {
     width: "100%",
-    height: 120,
-    borderRadius: 8,
+    height: 118,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: "#FFD6BF",
     backgroundColor: "#FFF4EC",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 4
-  },
-  videoText: {
-    color: "#FF6A00",
-    fontSize: 12
+    justifyContent: "center"
   },
   postBody: {
     color: "#1F2937",
     fontSize: 13
   },
-  postStats: {
+  emptyText: {
     color: "#6B7280",
-    fontSize: 11
+    fontSize: 13
   }
 });

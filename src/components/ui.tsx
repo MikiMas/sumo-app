@@ -111,7 +111,12 @@ export function AppButton({ label, onPress, disabled = false, loading = false, v
       disabled={isDisabled}
       style={({ pressed }) => [
         styles.button,
-        { backgroundColor: palette.bg, opacity: isDisabled ? 0.5 : pressed ? 0.85 : 1 }
+        {
+          backgroundColor: palette.bg,
+          borderColor: palette.border,
+          borderWidth: palette.border ? 1 : 0,
+          opacity: isDisabled ? 0.5 : pressed ? 0.85 : 1
+        }
       ]}
     >
       {loading ? <ActivityIndicator color={palette.fg} /> : <Text style={[styles.buttonText, { color: palette.fg }]}>{label}</Text>}
@@ -120,9 +125,9 @@ export function AppButton({ label, onPress, disabled = false, loading = false, v
 }
 
 const buttonVariants = {
-  primary: { bg: theme.colors.primary, fg: theme.colors.white },
-  danger: { bg: theme.colors.danger, fg: theme.colors.white },
-  secondary: { bg: theme.colors.secondary, fg: theme.colors.white }
+  primary: { bg: theme.colors.primary, fg: theme.colors.white, border: undefined as string | undefined },
+  danger: { bg: theme.colors.danger, fg: theme.colors.white, border: undefined as string | undefined },
+  secondary: { bg: theme.colors.secondary, fg: "#111111", border: "#D0D4DB" }
 };
 
 const styles = StyleSheet.create({
@@ -138,14 +143,14 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: theme.colors.card,
     borderWidth: 1,
-    borderColor: "#E4E8EE",
+    borderColor: "#D5DAE1",
     borderRadius: 18,
     padding: 14,
-    shadowColor: "#7A8594",
-    shadowOpacity: 0.14,
+    shadowColor: "#000000",
+    shadowOpacity: 0.08,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 6 },
-    elevation: 5
+    elevation: 3
   },
   inputWrap: {
     gap: 6
@@ -158,7 +163,7 @@ const styles = StyleSheet.create({
   input: {
     backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: "#D8DEE8",
+    borderColor: "#CBD2DC",
     borderRadius: 12,
     color: "#111827",
     fontFamily: "BebasNeue",
@@ -171,11 +176,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 14,
-    shadowColor: "#6B7280",
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 5
+    shadowColor: "#000000",
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 3
   },
   buttonText: {
     fontFamily: "BebasNeue",

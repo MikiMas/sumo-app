@@ -59,9 +59,19 @@ export async function fetchFeed(limit = 20, offset = 0) {
   return response.posts ?? [];
 }
 
+export async function fetchRoutePosts(routeId: string, limit = 20, offset = 0) {
+  const response = await apiRequest<{ ok: boolean; posts: FeedPost[] }>(
+    `/api/sumo/routes/${routeId}/posts?limit=${limit}&offset=${offset}`,
+    {
+      auth: true
+    }
+  );
+  return response.posts ?? [];
+}
+
 export async function createFeedPost(input: {
   body: string;
-  route_id?: string | null;
+  route_id: string;
   media?: Array<{ media_url: string; media_type?: "image" | "video"; thumb_url?: string | null; sort_order?: number }>;
 }) {
   const response = await apiRequest<{ ok: boolean; post: FeedPost }>("/api/sumo/feed", {

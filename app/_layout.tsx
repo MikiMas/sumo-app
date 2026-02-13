@@ -1,7 +1,8 @@
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useFonts } from "expo-font";
-import { Text, TextInput } from "react-native";
+import { Pressable, Text, TextInput } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 
 import { installNetworkLogger } from "@/lib/networkLogger";
 import { AuthProvider } from "@/providers/AuthProvider";
@@ -29,22 +30,39 @@ export default function RootLayout() {
 
   return (
     <AuthProvider>
-      <StatusBar style="dark" />
+      <StatusBar style="light" />
       <Stack
-        screenOptions={{
+        screenOptions={({ navigation }) => ({
           headerStyle: { backgroundColor: theme.colors.primary },
           headerTintColor: theme.colors.white,
           headerTitleStyle: { fontFamily: "UrbanJungle", fontSize: 40 },
           headerTitleAlign: "center",
-          contentStyle: { backgroundColor: theme.colors.bg }
-        }}
+          contentStyle: { backgroundColor: theme.colors.bg },
+          headerBackVisible: false,
+          headerLeft: () =>
+            navigation.canGoBack() ? (
+              <Pressable
+                onPress={() => navigation.goBack()}
+                accessibilityRole="button"
+                accessibilityLabel="Volver"
+                style={{
+                  marginLeft: 8,
+                  paddingHorizontal: 2,
+                  paddingVertical: 2
+                }}
+              >
+                <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
+              </Pressable>
+            ) : null
+        })}
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="(auth)" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="routes/[id]" options={{ title: "Ruta" }} />
-        <Stack.Screen name="routes/[id]/edit" options={{ title: "Editar trazado" }} />
-        <Stack.Screen name="routes/new" options={{ title: "Nueva ruta" }} />
+        <Stack.Screen name="garage/[id]" options={{ title: "Vehiculo" }} />
+        <Stack.Screen name="routes/[id]" options={{ title: "Spot" }} />
+        <Stack.Screen name="routes/[id]/edit" options={{ title: "Editar spot" }} />
+        <Stack.Screen name="routes/new" options={{ title: "Nuevo spot" }} />
       </Stack>
     </AuthProvider>
   );

@@ -1,12 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
+import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { AppButton, Card, LabeledInput, Screen, ShimmerBlock, ShimmerCard } from "@/components/ui";
+import { Card, LabeledInput, Screen, ShimmerBlock, ShimmerCard } from "@/components/ui";
 import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/providers/AuthProvider";
 import { FeedPost, fetchProfilePosts } from "@/services/feed";
+import { GarageBike, fetchGarage } from "@/services/garage";
 import { uploadImageFromUriRaw } from "@/services/media";
 
 export default function ProfileScreen() {
@@ -17,7 +19,9 @@ export default function ProfileScreen() {
   const [bio, setBio] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [posts, setPosts] = useState<FeedPost[]>([]);
+  const [garageBikes, setGarageBikes] = useState<GarageBike[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
+  const [loadingGarage, setLoadingGarage] = useState(false);
   const [saving, setSaving] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -40,6 +44,23 @@ export default function ProfileScreen() {
     }
   }, [profile?.id]);
 
+  const loadMyGarage = useCallback(async () => {
+    if (!user?.id) {
+      setGarageBikes([]);
+      return;
+    }
+
+    setLoadingGarage(true);
+    try {
+      const result = await fetchGarage(user.id);
+      setGarageBikes(result ?? []);
+    } catch (error) {
+      console.error("Error cargando garaje:", error);
+    } finally {
+      setLoadingGarage(false);
+    }
+  }, [user?.id]);
+
   const stats = useMemo(() => {
     const likes = posts.reduce((acc, post) => acc + (post.likes_count ?? 0), 0);
     const comments = posts.reduce((acc, post) => acc + (post.comments_count ?? 0), 0);
@@ -57,6 +78,10 @@ export default function ProfileScreen() {
   useEffect(() => {
     loadMyPosts();
   }, [loadMyPosts]);
+
+  useEffect(() => {
+    loadMyGarage();
+  }, [loadMyGarage]);
 
   const onPickAvatar = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -162,10 +187,7 @@ export default function ProfileScreen() {
             <Card style={styles.profileCard}>
               <View style={styles.heroRow}>
                 <Pressable onPress={onPickAvatar} style={styles.avatarWrap}>
-                  {avatarUrl ? <Image source={{ uri: avatarUrl }} style={styles.avatar} /> : <Ionicons name="person" size={40} color="#FF6A00" />}
-                  <View style={styles.avatarEditBadge}>
-                    <Ionicons name="camera" size={14} color="#FFFFFF" />
-                  </View>
+                  {avatarUrl ? <Image source={{ uri: avatarUrl }} style={styles.avatar} /> : <Ionicons name="person" size={42} color="#111111" />}
                 </Pressable>
 
                 <View style={styles.statsRow}>
@@ -192,8 +214,23 @@ export default function ProfileScreen() {
               </View>
 
               <View style={styles.profileActions}>
-                <AppButton label={editing ? "Ocultar edicion" : "Editar perfil"} onPress={() => setEditing((current) => !current)} variant="secondary" />
-                <AppButton label={uploadingAvatar ? "Subiendo avatar..." : "Cambiar foto"} onPress={onPickAvatar} disabled={uploadingAvatar} />
+                <Pressable
+                  style={styles.iconBtn}
+                  onPress={() => setEditing((current) => !current)}
+                  accessibilityRole="button"
+                  accessibilityLabel={editing ? "Ocultar edicion" : "Editar perfil"}
+                >
+                  <Ionicons name={editing ? "close-outline" : "pencil-outline"} size={18} color="#111827" />
+                </Pressable>
+                <Pressable
+                  style={[styles.iconBtnDark, uploadingAvatar && styles.iconBtnDisabled]}
+                  onPress={onPickAvatar}
+                  disabled={uploadingAvatar}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cambiar foto de perfil"
+                >
+                  <Ionicons name={uploadingAvatar ? "hourglass-outline" : "image-outline"} size={18} color="#FFFFFF" />
+                </Pressable>
               </View>
             </Card>
 
@@ -203,10 +240,78 @@ export default function ProfileScreen() {
                 <LabeledInput label="Nombre visible" value={displayName} onChangeText={setDisplayName} />
                 <LabeledInput label="Ciudad" value={homeCity} onChangeText={setHomeCity} />
                 <LabeledInput label="Bio" value={bio} onChangeText={setBio} multiline numberOfLines={3} />
-                <AppButton label="Guardar cambios" onPress={onSave} loading={saving} />
-                <AppButton label="Cerrar sesion" variant="danger" onPress={onSignOut} loading={signingOut} />
+                <View style={styles.formActions}>
+                  <Pressable
+                    style={[styles.iconBtnDark, saving && styles.iconBtnDisabled]}
+                    onPress={onSave}
+                    disabled={saving}
+                    accessibilityRole="button"
+                    accessibilityLabel="Guardar cambios"
+                  >
+                    <Ionicons name={saving ? "hourglass-outline" : "checkmark"} size={18} color="#FFFFFF" />
+                  </Pressable>
+                  <Pressable
+                    style={[styles.iconBtnDanger, signingOut && styles.iconBtnDisabled]}
+                    onPress={onSignOut}
+                    disabled={signingOut}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cerrar sesion"
+                  >
+                    <Ionicons name={signingOut ? "hourglass-outline" : "log-out-outline"} size={18} color="#FFFFFF" />
+                  </Pressable>
+                </View>
               </Card>
             ) : null}
+
+            <Card style={styles.garageCard}>
+              <View style={styles.garageHead}>
+                <View style={styles.garageTitleWrap}>
+                  <Ionicons name="bicycle-outline" size={16} color="#111827" />
+                  <Text style={styles.garageTitle}>Garaje</Text>
+                </View>
+                <Pressable
+                  style={styles.iconBtn}
+                  onPress={() => router.push("/(tabs)/garage")}
+                  accessibilityRole="button"
+                  accessibilityLabel="Abrir garaje"
+                >
+                  <Ionicons name="add" size={18} color="#111827" />
+                </Pressable>
+              </View>
+
+              {loadingGarage ? (
+                <Text style={styles.garageEmpty}>Cargando...</Text>
+              ) : garageBikes.length === 0 ? (
+                <Text style={styles.garageEmpty}>Sin motos.</Text>
+              ) : (
+                <View style={styles.garageList}>
+                  {garageBikes.map((bike) => (
+                    <Pressable
+                      key={bike.id}
+                      onPress={() => router.push(`/garage/${bike.id}`)}
+                      style={styles.garageItem}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Abrir ${bike.brand} ${bike.model}`}
+                    >
+                      {bike.photo_url ? (
+                        <Image source={{ uri: bike.photo_url }} style={styles.garageImage} />
+                      ) : (
+                        <View style={styles.garageImageFallback}>
+                          <Ionicons name="bicycle-outline" size={18} color="#111827" />
+                        </View>
+                      )}
+                      <View style={styles.garageMeta}>
+                        <Text style={styles.garageBikeTitle}>
+                          {bike.brand} {bike.model}
+                        </Text>
+                        <Text style={styles.garageBikeSub}>{bike.year ? String(bike.year) : "Anio -"}</Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={15} color="#6B7280" />
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+            </Card>
 
             <Card style={styles.postsCard}>
               <View style={styles.postsHead}>
@@ -262,8 +367,8 @@ const styles = StyleSheet.create({
     height: 92,
     borderRadius: 999,
     borderWidth: 2,
-    borderColor: "#FFD4BD",
-    backgroundColor: "#FFF4EC",
+    borderColor: "#D1D5DB",
+    backgroundColor: "#FFFFFF",
     alignItems: "center",
     justifyContent: "center",
     overflow: "hidden",
@@ -272,19 +377,6 @@ const styles = StyleSheet.create({
   avatar: {
     width: "100%",
     height: "100%"
-  },
-  avatarEditBadge: {
-    position: "absolute",
-    right: 2,
-    bottom: 2,
-    width: 26,
-    height: 26,
-    borderRadius: 999,
-    backgroundColor: "#FF6A00",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 2,
-    borderColor: "#FFFFFF"
   },
   statsRow: {
     flex: 1,
@@ -323,10 +415,114 @@ const styles = StyleSheet.create({
     fontSize: 12
   },
   profileActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
     gap: 8
+  },
+  iconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  iconBtnDark: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#111827",
+    backgroundColor: "#111827",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  iconBtnDanger: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#B91C1C",
+    backgroundColor: "#B91C1C",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  iconBtnDisabled: {
+    opacity: 0.55
   },
   formCard: {
     gap: 10
+  },
+  formActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8
+  },
+  garageCard: {
+    gap: 10
+  },
+  garageHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  garageTitleWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8
+  },
+  garageTitle: {
+    color: "#111827",
+    fontSize: 16
+  },
+  garageEmpty: {
+    color: "#6B7280",
+    fontSize: 13
+  },
+  garageList: {
+    gap: 8
+  },
+  garageItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 10,
+    padding: 8,
+    backgroundColor: "#FFFFFF"
+  },
+  garageImage: {
+    width: 76,
+    height: 56,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    backgroundColor: "#F3F4F6"
+  },
+  garageImageFallback: {
+    width: 76,
+    height: 56,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  garageMeta: {
+    flex: 1,
+    gap: 2
+  },
+  garageBikeTitle: {
+    color: "#111111",
+    fontSize: 16
+  },
+  garageBikeSub: {
+    color: "#6B7280",
+    fontSize: 12
   },
   postsCard: {
     gap: 10

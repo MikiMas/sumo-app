@@ -21,7 +21,7 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       await signIn(email.trim(), password);
-      router.replace("/(tabs)/home");
+      router.replace("/(tabs)/routes");
     } catch (error) {
       Alert.alert("No se pudo iniciar sesion", String(error));
     } finally {

@@ -1,3 +1,5 @@
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as ImagePicker from "expo-image-picker";
 import {
@@ -13,46 +15,46 @@ import {
   View
 } from "react-native";
 
-import { AppButton, Card, LabeledInput, Screen, ShimmerBlock, ShimmerCard } from "@/components/ui";
+import { Card, Screen, ShimmerCard } from "@/components/ui";
 import { useAuth } from "@/providers/AuthProvider";
 import { uploadImageFromUriRaw } from "@/services/media";
-import { GarageBike, addBikeMedia, addBikeMod, createBike, fetchGarage } from "@/services/garage";
+import { GarageBike, createBike, fetchGarage } from "@/services/garage";
 
 const SUPERMOTO_CATALOG: Record<string, string[]> = {
   KTM: [
-    "125 XC-W (2T)",
-    "250 EXC (2T)",
-    "300 EXC (2T)",
-    "250 EXC-F (4T)",
-    "350 EXC-F (4T)",
-    "450 EXC-F (4T)",
-    "500 EXC-F (4T)"
+    "125 XC-W",
+    "250 EXC",
+    "300 EXC",
+    "250 EXC-F",
+    "350 EXC-F",
+    "450 EXC-F",
+    "500 EXC-F"
   ],
   Husqvarna: [
-    "TC 125 (2T)",
-    "TE 150 (2T)",
-    "TE 250 (2T)",
-    "TE 300 (2T)",
-    "FE 250 (4T)",
-    "FE 350 (4T)",
-    "FE 450 (4T)",
-    "FE 501 (4T)"
+    "TC 125",
+    "TE 150",
+    "TE 250",
+    "TE 300",
+    "FE 250",
+    "FE 350",
+    "FE 450",
+    "FE 501"
   ],
-  GASGAS: ["EC 250 (2T)", "EC 300 (2T)", "ES 350 (4T)", "EC 450F (4T)", "ES 500 (4T)"],
+  GASGAS: ["EC 250", "EC 300", "ES 350", "EC 450F", "ES 500"],
   Yamaha: [
-    "YZ125 (2T)",
-    "YZ250 (2T)",
-    "YZ65 (2T)",
-    "YZ85 (2T)",
-    "YZ85LW (2T)",
-    "YZ125X (2T)",
-    "YZ250X (2T)",
-    "YZ250F (4T)",
-    "YZ450F (4T)",
-    "YZ250FX (4T)",
-    "YZ450FX (4T)",
-    "WR250F (4T)",
-    "WR450F (4T)"
+    "YZ125",
+    "YZ250",
+    "YZ65",
+    "YZ85",
+    "YZ85LW",
+    "YZ125X",
+    "YZ250X",
+    "YZ250F",
+    "YZ450F",
+    "YZ250FX",
+    "YZ450FX",
+    "WR250F",
+    "WR450F"
   ],
   Honda: ["CRF250R", "CRF450R"],
   Suzuki: ["DR-Z400SM"],
@@ -70,40 +72,25 @@ export default function GarageScreen() {
   const [bikes, setBikes] = useState<GarageBike[]>([]);
   const [loadingGarage, setLoadingGarage] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [loadingCreate, setLoadingCreate] = useState(false);
-  const [showCreateForm, setShowCreateForm] = useState(false);
   const [newBikeBrand, setNewBikeBrand] = useState("");
   const [newBikeModel, setNewBikeModel] = useState("");
   const [newBikeYear, setNewBikeYear] = useState("");
   const [newBikePhotoUrl, setNewBikePhotoUrl] = useState("");
   const [uploadingMainPhoto, setUploadingMainPhoto] = useState(false);
-  const [uploadingExtraFor, setUploadingExtraFor] = useState<string | null>(null);
   const [openSelector, setOpenSelector] = useState<SelectorKind | null>(null);
-  const [modDrafts, setModDrafts] = useState<Record<string, string>>({});
-  const [modSavingFor, setModSavingFor] = useState<string | null>(null);
 
   const brandOptions = useMemo(() => Object.keys(SUPERMOTO_CATALOG), []);
   const modelOptions = useMemo(() => SUPERMOTO_CATALOG[newBikeBrand] ?? [], [newBikeBrand]);
 
   const selectorOptions = useMemo(() => {
-    if (openSelector === "brand") {
-      return brandOptions;
-    }
-    if (openSelector === "model") {
-      return modelOptions;
-    }
-    if (openSelector === "year") {
-      return YEAR_OPTIONS;
-    }
+    if (openSelector === "brand") return brandOptions;
+    if (openSelector === "model") return modelOptions;
+    if (openSelector === "year") return YEAR_OPTIONS;
     return [] as string[];
   }, [brandOptions, modelOptions, openSelector]);
-
-  const selectorTitle = useMemo(() => {
-    if (openSelector === "brand") return "Selecciona marca";
-    if (openSelector === "model") return "Selecciona modelo";
-    if (openSelector === "year") return "Selecciona año";
-    return "";
-  }, [openSelector]);
 
   const selectorValue = useMemo(() => {
     if (openSelector === "brand") return newBikeBrand;
@@ -120,6 +107,8 @@ export default function GarageScreen() {
     try {
       const data = await fetchGarage(user.id);
       setBikes(data);
+    } catch (error) {
+      Alert.alert("Error", `No se pudo cargar tu garaje: ${String(error)}`);
     } finally {
       setLoadingGarage(false);
     }
@@ -135,13 +124,22 @@ export default function GarageScreen() {
     setRefreshing(false);
   };
 
+  const resetCreateDraft = () => {
+    setNewBikeBrand("");
+    setNewBikeModel("");
+    setNewBikeYear("");
+    setNewBikePhotoUrl("");
+    setOpenSelector(null);
+  };
+
   const onCreateBike = async () => {
     if (!user || !newBikeBrand || !newBikeModel) {
-      Alert.alert("Faltan datos", "Selecciona marca y modelo para guardar el vehiculo.");
+      Alert.alert("Faltan datos", "Selecciona marca y modelo para guardar el vehículo.");
       return;
     }
+
     if (uploadingMainPhoto) {
-      Alert.alert("Subiendo foto", "Espera a que termine la subida de la foto antes de guardar.");
+      Alert.alert("Subiendo foto", "Espera a que termine la subida antes de guardar.");
       return;
     }
 
@@ -158,44 +156,21 @@ export default function GarageScreen() {
         },
         user.id
       );
-      setNewBikeBrand("");
-      setNewBikeModel("");
-      setNewBikeYear("");
-      setNewBikePhotoUrl("");
-      setShowCreateForm(false);
+
+      resetCreateDraft();
+      setShowCreateModal(false);
       await loadGarage();
     } catch (error) {
-      console.error("Error creando moto:", error);
+      Alert.alert("No se pudo crear el vehiculo", String(error));
     } finally {
       setLoadingCreate(false);
-    }
-  };
-
-  const onAddMod = async (bikeId: string) => {
-    const draft = modDrafts[bikeId]?.trim();
-    if (!draft) {
-      return;
-    }
-
-    setModSavingFor(bikeId);
-    try {
-      await addBikeMod({
-        bike_id: bikeId,
-        name: draft
-      });
-      setModDrafts((current) => ({ ...current, [bikeId]: "" }));
-      await loadGarage();
-    } catch (error) {
-      console.error("Error guardando mod:", error);
-    } finally {
-      setModSavingFor(null);
     }
   };
 
   const onPickMainPhoto = async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert("Permiso requerido", "Necesitas dar permiso para abrir la galeria.");
+      Alert.alert("Permiso requerido", "Necesitas dar permiso para abrir la galería.");
       return;
     }
 
@@ -208,6 +183,7 @@ export default function GarageScreen() {
     if (result.canceled || !result.assets[0]?.uri) {
       return;
     }
+
     if (!session?.accessToken) {
       Alert.alert("Sesion", "Inicia sesion de nuevo para subir imagen.");
       return;
@@ -221,39 +197,6 @@ export default function GarageScreen() {
       Alert.alert("No se pudo subir imagen", String(error));
     } finally {
       setUploadingMainPhoto(false);
-    }
-  };
-
-  const onPickExtraPhoto = async (bikeId: string) => {
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert("Permiso requerido", "Necesitas dar permiso para abrir la galeria.");
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      allowsEditing: false,
-      quality: 0.8
-    });
-
-    if (result.canceled || !result.assets[0]?.uri) {
-      return;
-    }
-    if (!session?.accessToken) {
-      Alert.alert("Sesion", "Inicia sesion de nuevo para subir imagen.");
-      return;
-    }
-
-    setUploadingExtraFor(bikeId);
-    try {
-      const publicUrl = await uploadImageFromUriRaw(result.assets[0].uri, "bike-media", session.accessToken);
-      await addBikeMedia(bikeId, publicUrl, null);
-      await loadGarage();
-    } catch (error) {
-      Alert.alert("No se pudo subir imagen", String(error));
-    } finally {
-      setUploadingExtraFor(null);
     }
   };
 
@@ -277,75 +220,18 @@ export default function GarageScreen() {
         <FlatList
           data={bikes}
           keyExtractor={(item) => item.id}
-          refreshControl={<RefreshControl tintColor="#ff6d00" refreshing={refreshing} onRefresh={onRefresh} />}
+          refreshControl={<RefreshControl tintColor="#111111" refreshing={refreshing} onRefresh={onRefresh} />}
           contentContainerStyle={styles.list}
-          scrollEnabled
-          showsVerticalScrollIndicator
-          alwaysBounceVertical
+          showsVerticalScrollIndicator={false}
           ListHeaderComponent={
-            <View style={styles.headerBlock}>
-              {!showCreateForm ? (
-                <Card style={styles.emptyCard}>
-                  <Text style={styles.emptyTitle}>{bikes.length === 0 ? "No tienes ningun vehiculo" : "Añade otro vehiculo"}</Text>
-                  <Text style={styles.emptyText}>
-                    {bikes.length === 0
-                      ? "Empieza creando tu primera moto para tu perfil."
-                      : "Selecciona marca, modelo y año desde listas desplegables."}
-                  </Text>
-                  <AppButton label="Añadir vehiculo" onPress={() => setShowCreateForm(true)} />
-                </Card>
-              ) : (
-                <Card style={styles.newBikeCard}>
-                  <Text style={styles.sectionTitle}>Nuevo vehiculo</Text>
-
-                  <View style={styles.fieldGroup}>
-                    <Text style={styles.groupLabel}>Marca</Text>
-                    <Pressable style={styles.selectField} onPress={() => setOpenSelector("brand")}>
-                      <Text style={[styles.selectText, !newBikeBrand && styles.selectPlaceholder]}>
-                        {newBikeBrand || "Selecciona marca"}
-                      </Text>
-                      <Text style={styles.selectArrow}>v</Text>
-                    </Pressable>
-                  </View>
-
-                  <View style={styles.fieldGroup}>
-                    <Text style={styles.groupLabel}>Modelo</Text>
-                    <Pressable
-                      style={[styles.selectField, !newBikeBrand && styles.selectFieldDisabled]}
-                      onPress={() => setOpenSelector("model")}
-                      disabled={!newBikeBrand}
-                    >
-                      <Text style={[styles.selectText, !newBikeModel && styles.selectPlaceholder]}>
-                        {newBikeModel || (newBikeBrand ? "Selecciona modelo" : "Primero selecciona marca")}
-                      </Text>
-                      <Text style={styles.selectArrow}>v</Text>
-                    </Pressable>
-                  </View>
-
-                  <View style={styles.fieldGroup}>
-                    <Text style={styles.groupLabel}>Año</Text>
-                    <Pressable style={styles.selectField} onPress={() => setOpenSelector("year")}>
-                      <Text style={[styles.selectText, !newBikeYear && styles.selectPlaceholder]}>{newBikeYear || "Selecciona año"}</Text>
-                      <Text style={styles.selectArrow}>v</Text>
-                    </Pressable>
-                  </View>
-
-                  <AppButton
-                    label={newBikePhotoUrl ? "Cambiar foto de galeria" : "Elegir foto de galeria (opcional)"}
-                    variant="secondary"
-                    onPress={onPickMainPhoto}
-                    loading={uploadingMainPhoto}
-                  />
-
-                  {newBikePhotoUrl ? <Image source={{ uri: newBikePhotoUrl }} style={styles.mainPreview} /> : null}
-
-                  <View style={styles.formActions}>
-                    <AppButton label="Guardar en mi garaje" onPress={onCreateBike} loading={loadingCreate} disabled={uploadingMainPhoto} />
-                    <AppButton label="Cancelar" variant="secondary" onPress={() => setShowCreateForm(false)} />
-                  </View>
-                </Card>
-              )}
-            </View>
+            <Pressable
+              style={styles.addWideButton}
+              onPress={() => setShowCreateModal(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Añadir vehículo"
+            >
+              <Ionicons name="add" size={22} color="#FFFFFF" />
+            </Pressable>
           }
           ListEmptyComponent={
             loadingGarage ? (
@@ -353,75 +239,133 @@ export default function GarageScreen() {
                 <ShimmerCard />
                 <ShimmerCard />
               </View>
-            ) : null
+            ) : (
+              <Card style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>Sin vehículos</Text>
+                <Text style={styles.emptyText}>Pulsa + para crear tu primera moto.</Text>
+              </Card>
+            )
           }
           renderItem={({ item }) => (
-            <Card style={styles.bikeCard}>
-              <View style={styles.bikeTop}>
-                <View style={styles.bikeInfo}>
-                  <Text style={styles.bikeTitle}>
-                    {item.brand} {item.model}
-                  </Text>
-                  <Text style={styles.bikeSubtitle}>{item.year ? `${item.year}` : "Año ?"}</Text>
-                </View>
-                {item.photo_url ? <Image source={{ uri: item.photo_url }} style={styles.bikeImage} /> : <ShimmerBlock height={72} width={92} radius={10} />}
-              </View>
+            <Pressable onPress={() => router.push(`/garage/${item.id}`)}>
+              <Card style={styles.previewCard}>
+                <View style={styles.previewRow}>
+                  {item.photo_url ? (
+                    <Image source={{ uri: item.photo_url }} style={styles.previewImage} />
+                  ) : (
+                    <View style={styles.previewImageFallback}>
+                      <Ionicons name="bicycle-outline" size={20} color="#FF7A00" />
+                    </View>
+                  )}
 
-              <View style={styles.modList}>
-                {item.bike_mods.length === 0 ? (
-                  <Text style={styles.modItem}>Sin modificaciones aun.</Text>
-                ) : (
-                  item.bike_mods.map((mod) => (
-                    <Text key={mod.id} style={styles.modItem}>
-                      - {mod.name}
+                  <View style={styles.previewInfo}>
+                    <Text style={styles.previewTitle}>
+                      {item.brand} {item.model}
                     </Text>
-                  ))
-                )}
-              </View>
-
-              <View style={styles.mediaStrip}>
-                {(item.bike_media ?? []).length === 0 ? (
-                  <Text style={styles.modItem}>Sin fotos extra aun.</Text>
-                ) : (
-                  (item.bike_media ?? []).slice(0, 6).map((media) => <Image key={media.id} source={{ uri: media.media_url }} style={styles.mediaThumb} />)
-                )}
-              </View>
-
-              <View style={styles.modForm}>
-                <AppButton
-                  label="Añadir foto extra desde galeria"
-                  variant="secondary"
-                  onPress={() => onPickExtraPhoto(item.id)}
-                  loading={uploadingExtraFor === item.id}
-                />
-                <Text style={styles.helperText}>Se sube y se guarda automaticamente.</Text>
-              </View>
-
-              <View style={styles.modForm}>
-                <LabeledInput
-                  label="Nueva mod"
-                  value={modDrafts[item.id] ?? ""}
-                  onChangeText={(value) => setModDrafts((current) => ({ ...current, [item.id]: value }))}
-                />
-                <AppButton
-                  label="Añadir mod"
-                  variant="secondary"
-                  onPress={() => onAddMod(item.id)}
-                  loading={modSavingFor === item.id}
-                />
-              </View>
-            </Card>
+                    <Text style={styles.previewSubtitle}>{item.year ? `${item.year}` : "Año -"}</Text>
+                  </View>
+                </View>
+              </Card>
+            </Pressable>
           )}
         />
+
+        <Modal visible={showCreateModal} transparent animationType="slide" onRequestClose={() => setShowCreateModal(false)}>
+          <View style={styles.modalBackdrop}>
+            <Pressable style={StyleSheet.absoluteFill} onPress={() => setShowCreateModal(false)} />
+            <Card style={styles.modalCard}>
+              <View style={styles.modalHeader}>
+                <View style={styles.modalBadge}>
+                  <Ionicons name="bicycle-outline" size={15} color="#111111" />
+                </View>
+                <Pressable style={styles.modalCloseBtn} onPress={() => setShowCreateModal(false)}>
+                  <Ionicons name="close" size={16} color="#111111" />
+                </Pressable>
+              </View>
+
+              <ScrollView style={styles.modalScroll} contentContainerStyle={styles.modalScrollContent}>
+                <Pressable style={styles.selectField} onPress={() => setOpenSelector("brand")}>
+                  <View style={styles.selectLeft}>
+                    <Ionicons name="pricetag-outline" size={15} color="#6B7280" />
+                    <Text style={[styles.selectText, !newBikeBrand && styles.selectPlaceholder]}>
+                      {newBikeBrand || "Marca"}
+                    </Text>
+                  </View>
+                  <Ionicons name="chevron-down" size={14} color="#6B7280" />
+                </Pressable>
+
+                <Pressable
+                  style={[styles.selectField, !newBikeBrand && styles.selectFieldDisabled]}
+                  onPress={() => setOpenSelector("model")}
+                  disabled={!newBikeBrand}
+                >
+                  <View style={styles.selectLeft}>
+                    <Ionicons name="construct-outline" size={15} color="#6B7280" />
+                    <Text style={[styles.selectText, !newBikeModel && styles.selectPlaceholder]}>{newBikeModel || "Modelo"}</Text>
+                  </View>
+                  <Ionicons name="chevron-down" size={14} color="#6B7280" />
+                </Pressable>
+
+                <Pressable style={styles.selectField} onPress={() => setOpenSelector("year")}>
+                  <View style={styles.selectLeft}>
+                    <Ionicons name="calendar-outline" size={15} color="#6B7280" />
+                    <Text style={[styles.selectText, !newBikeYear && styles.selectPlaceholder]}>{newBikeYear || "Año"}</Text>
+                  </View>
+                  <Ionicons name="chevron-down" size={14} color="#6B7280" />
+                </Pressable>
+
+                <View style={styles.photoActionRow}>
+                  <Pressable
+                    style={[styles.iconActionBtn, uploadingMainPhoto && styles.iconActionBtnDisabled]}
+                    onPress={onPickMainPhoto}
+                    disabled={uploadingMainPhoto}
+                    accessibilityRole="button"
+                    accessibilityLabel={newBikePhotoUrl ? "Cambiar foto" : "Elegir foto"}
+                  >
+                    <Ionicons name={newBikePhotoUrl ? "images-outline" : "camera-outline"} size={19} color="#111111" />
+                  </Pressable>
+                </View>
+
+                {newBikePhotoUrl ? <Image source={{ uri: newBikePhotoUrl }} style={styles.mainPreview} /> : null}
+
+                <View style={styles.formActions}>
+                  <Pressable
+                    style={styles.iconActionBtn}
+                    onPress={() => {
+                      setShowCreateModal(false);
+                      resetCreateDraft();
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Cancelar"
+                  >
+                    <Ionicons name="close" size={20} color="#111111" />
+                  </Pressable>
+
+                  <Pressable
+                    style={[styles.iconActionBtnPrimary, (loadingCreate || uploadingMainPhoto) && styles.iconActionBtnDisabled]}
+                    onPress={onCreateBike}
+                    disabled={loadingCreate || uploadingMainPhoto}
+                    accessibilityRole="button"
+                    accessibilityLabel="Guardar vehículo"
+                  >
+                    <Ionicons name={loadingCreate ? "hourglass-outline" : "checkmark"} size={20} color="#FFFFFF" />
+                  </Pressable>
+                </View>
+              </ScrollView>
+            </Card>
+          </View>
+        </Modal>
 
         <Modal visible={openSelector != null} transparent animationType="slide" onRequestClose={() => setOpenSelector(null)}>
           <View style={styles.selectorBackdrop}>
             <Pressable style={StyleSheet.absoluteFill} onPress={() => setOpenSelector(null)} />
             <Card style={styles.selectorCard}>
-              <Text style={styles.selectorTitle}>{selectorTitle}</Text>
+              <View style={styles.selectorHeaderIcon}>
+                <Ionicons name="list-outline" size={16} color="#111111" />
+              </View>
               <ScrollView style={styles.selectorList} contentContainerStyle={styles.selectorListContent}>
                 {selectorOptions.length === 0 ? (
-                  <Text style={styles.helperText}>No hay opciones disponibles.</Text>
+                  <Text style={styles.selectorEmpty}>-</Text>
                 ) : (
                   selectorOptions.map((option) => (
                     <Pressable
@@ -429,12 +373,23 @@ export default function GarageScreen() {
                       onPress={() => onSelectOption(option)}
                       style={[styles.selectorOption, option === selectorValue && styles.selectorOptionActive]}
                     >
-                      <Text style={[styles.selectorOptionText, option === selectorValue && styles.selectorOptionTextActive]}>{option}</Text>
+                      <Text style={[styles.selectorOptionText, option === selectorValue && styles.selectorOptionTextActive]}>
+                        {option}
+                      </Text>
                     </Pressable>
                   ))
                 )}
               </ScrollView>
-              <AppButton label="Cerrar" variant="secondary" onPress={() => setOpenSelector(null)} />
+              <View style={styles.selectorFooter}>
+                <Pressable
+                  style={styles.selectorCloseBtn}
+                  onPress={() => setOpenSelector(null)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Cerrar selector"
+                >
+                  <Ionicons name="close" size={18} color="#111111" />
+                </Pressable>
+              </View>
             </Card>
           </View>
         </Modal>
@@ -451,30 +406,110 @@ const styles = StyleSheet.create({
   loadingWrap: {
     gap: 10
   },
-  headerBlock: {
-    marginBottom: 8
+  addWideButton: {
+    minHeight: 52,
+    borderRadius: 14,
+    backgroundColor: "#0F0F10",
+    borderWidth: 1,
+    borderColor: "#0F0F10",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4
   },
-  sectionTitle: {
-    color: "#111827",
-    fontSize: 20,
-    fontWeight: "900"
+  previewCard: {
+    padding: 12
   },
-  newBikeCard: {
+  previewRow: {
+    flexDirection: "row",
+    alignItems: "center",
     gap: 10
   },
-  fieldGroup: {
-    gap: 6
+  previewImage: {
+    width: 92,
+    height: 68,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#CBD2DC",
+    backgroundColor: "#EEF2F7"
   },
-  groupLabel: {
+  previewImageFallback: {
+    width: 92,
+    height: 68,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#CBD2DC",
+    backgroundColor: "#F8F9FB",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  previewInfo: {
+    flex: 1,
+    gap: 4
+  },
+  previewTitle: {
+    color: "#111111",
+    fontSize: 19
+  },
+  previewSubtitle: {
     color: "#6B7280",
-    fontSize: 13,
-    fontWeight: "700"
+    fontSize: 12
+  },
+  emptyCard: {
+    gap: 8
+  },
+  emptyTitle: {
+    color: "#111111",
+    fontSize: 22
+  },
+  emptyText: {
+    color: "#6B7280",
+    fontSize: 13
+  },
+  modalBackdrop: {
+    flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(17,24,39,0.32)",
+    padding: 14
+  },
+  modalCard: {
+    maxHeight: "82%",
+    gap: 10
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  modalBadge: {
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    backgroundColor: "#F3F4F6",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  modalCloseBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    backgroundColor: "#F3F4F6",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  modalScroll: {
+    maxHeight: 560
+  },
+  modalScrollContent: {
+    gap: 10,
+    paddingBottom: 4
   },
   selectField: {
     minHeight: 44,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#D8DEE8",
+    borderColor: "#CBD2DC",
     backgroundColor: "#FFFFFF",
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -483,99 +518,63 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 12
   },
+  selectLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flex: 1
+  },
   selectFieldDisabled: {
-    opacity: 0.6
+    opacity: 0.55
   },
   selectText: {
-    color: "#111827",
-    fontWeight: "700",
+    color: "#111111",
     flex: 1
   },
   selectPlaceholder: {
     color: "#9CA3AF"
   },
-  selectArrow: {
-    color: "#6B7280",
-    fontSize: 12,
-    fontWeight: "900"
+  photoActionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-start"
   },
-  helperText: {
-    color: "#6B7280",
-    fontSize: 12
+  iconActionBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  iconActionBtnPrimary: {
+    width: 42,
+    height: 42,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: "#0F0F10",
+    backgroundColor: "#0F0F10",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  iconActionBtnDisabled: {
+    opacity: 0.55
   },
   mainPreview: {
     width: "100%",
     height: 180,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#D8DEE8",
+    borderColor: "#CBD2DC",
     backgroundColor: "#EEF2F7"
   },
   formActions: {
-    gap: 8,
-    marginTop: 6
-  },
-  bikeCard: {
-    gap: 10
-  },
-  bikeTop: {
     flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 10
-  },
-  bikeInfo: {
-    flex: 1,
-    gap: 4
-  },
-  bikeTitle: {
-    color: "#111827",
-    fontWeight: "900",
-    fontSize: 18
-  },
-  bikeSubtitle: {
-    color: "#6B7280"
-  },
-  bikeImage: {
-    width: 92,
-    height: 72,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "#35506b",
-    backgroundColor: "#0a1016"
-  },
-  modList: {
-    gap: 4
-  },
-  mediaStrip: {
-    flexDirection: "row",
+    justifyContent: "flex-end",
     gap: 8,
-    flexWrap: "wrap"
-  },
-  mediaThumb: {
-    width: 68,
-    height: 54,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#35506b",
-    backgroundColor: "#0a1016"
-  },
-  modItem: {
-    color: "#4B5563"
-  },
-  modForm: {
-    gap: 8,
-    marginTop: 2
-  },
-  emptyCard: {
-    gap: 10
-  },
-  emptyTitle: {
-    color: "#111827",
-    fontWeight: "900",
-    fontSize: 20
-  },
-  emptyText: {
-    color: "#6B7280"
+    marginTop: 4
   },
   selectorBackdrop: {
     flex: 1,
@@ -588,10 +587,15 @@ const styles = StyleSheet.create({
     maxHeight: "65%",
     gap: 10
   },
-  selectorTitle: {
-    color: "#111827",
-    fontWeight: "900",
-    fontSize: 18
+  selectorHeaderIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    backgroundColor: "#F3F4F6",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    alignItems: "center",
+    justifyContent: "center"
   },
   selectorList: {
     maxHeight: 340
@@ -603,21 +607,37 @@ const styles = StyleSheet.create({
   selectorOption: {
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#D8DEE8",
+    borderColor: "#CBD2DC",
     backgroundColor: "#FFFFFF",
     paddingHorizontal: 12,
     paddingVertical: 11
   },
   selectorOptionActive: {
-    borderColor: "#FF6A00",
-    backgroundColor: "#FFF1E7"
+    borderColor: "#FF7A00",
+    backgroundColor: "#FFF3EA"
   },
   selectorOptionText: {
-    color: "#111827",
-    fontWeight: "700"
+    color: "#111111"
   },
   selectorOptionTextActive: {
     color: "#D9480F"
+  },
+  selectorEmpty: {
+    color: "#9CA3AF",
+    textAlign: "center",
+    paddingVertical: 10
+  },
+  selectorFooter: {
+    alignItems: "flex-end"
+  },
+  selectorCloseBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#CBD2DC",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center"
   }
 });
-

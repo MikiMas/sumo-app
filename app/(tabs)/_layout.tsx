@@ -1,4 +1,4 @@
-import { Redirect, Tabs } from "expo-router";
+import { Redirect, Tabs, router } from "expo-router";
 import { Pressable, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -31,27 +31,6 @@ function HeaderTitleFit({ children }: { children: string }) {
   );
 }
 
-function PlusTabButton({ onPress, focused }: { onPress?: (...args: any[]) => void; focused: boolean }) {
-  return (
-    <Pressable onPress={onPress} style={{ alignItems: "center", justifyContent: "center", flex: 1 }}>
-      <View
-        style={{
-          width: 34,
-          height: 34,
-          borderRadius: 17,
-          backgroundColor: theme.colors.primary,
-          alignItems: "center",
-          justifyContent: "center",
-          borderWidth: 1,
-          borderColor: theme.colors.primary
-        }}
-      >
-        <Ionicons name="add" size={18} color="#FFFFFF" />
-      </View>
-    </Pressable>
-  );
-}
-
 export default function TabsLayout() {
   const { session, loading } = useAuth();
 
@@ -73,65 +52,74 @@ export default function TabsLayout() {
 
   return (
     <Tabs
-      screenOptions={{
+      screenOptions={({ route, navigation }) => ({
         headerStyle: { backgroundColor: theme.colors.primary },
         headerTintColor: theme.colors.white,
         headerTitle: ({ children }) => <HeaderTitleFit>{children}</HeaderTitleFit>,
         headerTitleStyle: { fontFamily: "UrbanJungle", fontSize: 40 },
         headerTitleContainerStyle: { paddingTop: 10 },
         headerTitleAlign: "center",
-        tabBarStyle: {
-          position: "absolute",
-          left: 20,
-          right: 20,
-          bottom: 16,
-          borderTopWidth: 0,
-          backgroundColor: "#FFFFFF",
-          height: 72,
-          paddingTop: 8,
-          paddingBottom: 8,
-          borderRadius: 24,
-          overflow: "visible",
-          shadowColor: "#6B7280",
-          shadowOpacity: 0.2,
-          shadowRadius: 14,
-          shadowOffset: { width: 0, height: 6 },
-          elevation: 8
-        },
+        tabBarStyle: { display: "none" },
         tabBarActiveTintColor: theme.colors.primary,
-        tabBarInactiveTintColor: theme.colors.textSecondary
-      }}
+        tabBarInactiveTintColor: theme.colors.textSecondary,
+        headerLeft:
+          route.name === "routes"
+            ? undefined
+            : () => (
+                <Pressable
+                  onPress={() => {
+                    if (navigation.canGoBack()) {
+                      navigation.goBack();
+                      return;
+                    }
+                    router.replace("/(tabs)/routes");
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Volver"
+                  style={{
+                    marginLeft: 8,
+                    paddingHorizontal: 2,
+                    paddingVertical: 2
+                  }}
+                >
+                  <Ionicons name="chevron-back" size={24} color="#FFFFFF" />
+                </Pressable>
+              )
+      })}
     >
-      <Tabs.Screen
-        name="home"
-        options={{
-          title: "Inicio",
-          tabBarLabel: ({ focused }) => <TabLabel label="Inicio" focused={focused} />,
-          tabBarIcon: ({ focused }) => <TabIcon name={focused ? "home" : "home-outline"} focused={focused} />
-        }}
-      />
       <Tabs.Screen
         name="routes"
         options={{
-          title: "Rutas",
-          tabBarLabel: ({ focused }) => <TabLabel label="Rutas" focused={focused} />,
+          title: "Spots",
+          headerRight: () => (
+            <Pressable
+              onPress={() => router.push("/(tabs)/profile")}
+              accessibilityRole="button"
+              accessibilityLabel="Ir al perfil"
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 18,
+                borderWidth: 1,
+                borderColor: "#2A2A2A",
+                backgroundColor: "#FFFFFF",
+                alignItems: "center",
+                justifyContent: "center",
+                marginRight: 8
+              }}
+            >
+              <Ionicons name="person" size={18} color="#0B0B0B" />
+            </Pressable>
+          ),
+          tabBarLabel: ({ focused }) => <TabLabel label="Spots" focused={focused} />,
           tabBarIcon: ({ focused }) => <TabIcon name={focused ? "map" : "map-outline"} focused={focused} />
-        }}
-      />
-      <Tabs.Screen
-        name="create"
-        options={{
-          title: "Publicar",
-          headerTitle: "Publicar",
-          headerTitleStyle: { fontFamily: "UrbanJungle", fontSize: 30 },
-          tabBarLabel: () => null,
-          tabBarButton: ({ onPress, accessibilityState }) => <PlusTabButton onPress={onPress} focused={Boolean(accessibilityState?.selected)} />
         }}
       />
       <Tabs.Screen
         name="garage"
         options={{
           title: "Garaje",
+          href: null,
           tabBarLabel: ({ focused }) => <TabLabel label="Garaje" focused={focused} />,
           tabBarIcon: ({ focused }) => <TabIcon name={focused ? "construct" : "construct-outline"} focused={focused} />
         }}
@@ -144,6 +132,8 @@ export default function TabsLayout() {
           tabBarIcon: ({ focused }) => <TabIcon name={focused ? "person" : "person-outline"} focused={focused} />
         }}
       />
+      <Tabs.Screen name="home" options={{ href: null }} />
+      <Tabs.Screen name="create" options={{ href: null }} />
     </Tabs>
   );
 }

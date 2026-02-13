@@ -1,131 +1,151 @@
-import { useLocalSearchParams } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { router, Stack, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import * as ImagePicker from "expo-image-picker";
-import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import MapView, { Marker, Polyline } from "react-native-maps";
+import {
+  Alert,
+  Dimensions,
+  Image,
+  Linking,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View
+} from "react-native";
 
-import { AppButton, Card, LabeledInput, MapShimmer, Screen, ShimmerBlock, ShimmerCard } from "@/components/ui";
+import { Card, Screen, ShimmerBlock, ShimmerCard } from "@/components/ui";
+import { FeedPost, fetchRoutePosts } from "@/services/feed";
 import {
   RouteItem,
-  RoutePlan,
-  RoutePoint,
   SpotPresenceMember,
-  addRouteMedia,
   addRoutePlan,
+  checkInRoutePresence,
   fetchRouteById,
-  fetchRouteMedia,
-  fetchRoutePlans,
-  fetchRoutePoints,
   fetchRoutePresence
 } from "@/services/routes";
-import { useAuth } from "@/providers/AuthProvider";
-import { uploadImageFromUriRaw } from "@/services/media";
+
+const { width: SCREEN_WIDTH } = Dimensions.get("window");
+const CAROUSEL_ITEM_WIDTH = SCREEN_WIDTH - 60;
 
 export default function RouteDetailScreen() {
-  const { session } = useAuth();
   const params = useLocalSearchParams<{ id?: string | string[] }>();
   const routeId = Array.isArray(params.id) ? params.id[0] : params.id;
+
   const [route, setRoute] = useState<RouteItem | null>(null);
-  const [routePoints, setRoutePoints] = useState<RoutePoint[]>([]);
-  const [media, setMedia] = useState<any[]>([]);
-  const [plans, setPlans] = useState<RoutePlan[]>([]);
+  const [posts, setPosts] = useState<FeedPost[]>([]);
   const [presenceMembers, setPresenceMembers] = useState<SpotPresenceMember[]>([]);
   const [presenceCount, setPresenceCount] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [newMediaUrl, setNewMediaUrl] = useState("");
-  const [newPlanAt, setNewPlanAt] = useState("");
-  const [newPlanNote, setNewPlanNote] = useState("");
-  const [savingMedia, setSavingMedia] = useState(false);
+  const [loadingPresence, setLoadingPresence] = useState(false);
+  const [checkingIn, setCheckingIn] = useState(false);
   const [savingPlan, setSavingPlan] = useState(false);
-  const [mapReady, setMapReady] = useState(false);
+  const [membersModalOpen, setMembersModalOpen] = useState(false);
+  const [activeSlide, setActiveSlide] = useState(0);
 
-  const loadRouteData = useCallback(async () => {
-    if (!routeId) return;
+  const mediaPosts = useMemo(
+    () =>
+      posts.filter((post) => {
+        const sortedMedia = [...(post.post_media ?? [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+        return sortedMedia.length > 0;
+      }),
+    [posts]
+  );
+
+  const loadPresence = useCallback(async () => {
+    if (!routeId) {
+      return;
+    }
+
+    setLoadingPresence(true);
+    try {
+      const presence = await fetchRoutePresence(routeId);
+      setPresenceCount(presence.count ?? 0);
+      setPresenceMembers(presence.members ?? []);
+    } catch (error) {
+      Alert.alert("No se pudo cargar presencia", String(error));
+      setPresenceCount(0);
+      setPresenceMembers([]);
+    } finally {
+      setLoadingPresence(false);
+    }
+  }, [routeId]);
+
+  const loadSpotData = useCallback(async () => {
+    if (!routeId) {
+      return;
+    }
+
     setLoading(true);
     try {
-      const [routeData, pointsData, mediaData, plansData, presenceData] = await Promise.all([
+      const [routeData, postsData, presenceData] = await Promise.all([
         fetchRouteById(routeId),
-        fetchRoutePoints(routeId),
-        fetchRouteMedia(routeId),
-        fetchRoutePlans(routeId),
+        fetchRoutePosts(routeId, 50, 0),
         fetchRoutePresence(routeId)
       ]);
+
       setRoute(routeData);
-      setRoutePoints(pointsData);
-      setMedia(mediaData);
-      setPlans(plansData);
-      setPresenceCount(presenceData.count);
+      setPosts(postsData);
+      setPresenceCount(presenceData.count ?? 0);
       setPresenceMembers(presenceData.members ?? []);
+      setActiveSlide(0);
     } catch (error) {
-      Alert.alert("Error cargando ruta", String(error));
+      Alert.alert("Error cargando spot", String(error));
     } finally {
       setLoading(false);
     }
   }, [routeId]);
 
   useEffect(() => {
-    setMapReady(false);
-    loadRouteData();
-  }, [loadRouteData]);
+    loadSpotData();
+  }, [loadSpotData]);
 
-  const onAddMedia = async () => {
-    if (!routeId || !newMediaUrl.trim()) return;
-    setSavingMedia(true);
+  const onCheckIn = async () => {
+    if (!routeId || checkingIn) {
+      return;
+    }
+
+    setCheckingIn(true);
     try {
-      await addRouteMedia(routeId, newMediaUrl.trim(), null);
-      setNewMediaUrl("");
-      await loadRouteData();
+      await checkInRoutePresence(routeId, null);
+      await loadPresence();
+      Alert.alert("Listo", "Ya estas en este spot.");
     } catch (error) {
-      Alert.alert("No se pudo anadir foto", String(error));
+      Alert.alert("No se pudo marcar presencia", String(error));
     } finally {
-      setSavingMedia(false);
-    }
-  };
-
-  const onPickRouteMedia = async () => {
-    if (!routeId) return;
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert("Permiso requerido", "Necesitas dar permiso para abrir la galeria.");
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ["images"],
-      allowsEditing: false,
-      quality: 0.8
-    });
-    if (result.canceled || !result.assets[0]?.uri) return;
-    if (!session?.accessToken) {
-      Alert.alert("Sesion", "Inicia sesion de nuevo para subir imagen.");
-      return;
-    }
-    try {
-      const url = await uploadImageFromUriRaw(result.assets[0].uri, "route-media", session.accessToken);
-      setNewMediaUrl(url);
-    } catch (error) {
-      Alert.alert("No se pudo subir imagen", String(error));
+      setCheckingIn(false);
     }
   };
 
   const onAddPlan = async () => {
-    if (!routeId || !newPlanAt.trim()) return;
+    if (!routeId || savingPlan) {
+      return;
+    }
+
     setSavingPlan(true);
     try {
-      await addRoutePlan(routeId, newPlanAt.trim(), newPlanNote.trim() || null);
-      setNewPlanAt("");
-      setNewPlanNote("");
-      await loadRouteData();
+      const plannedAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      await addRoutePlan(routeId, plannedAt, null);
+      Alert.alert("Plan guardado", "Te hemos marcado como proximo en este spot.");
     } catch (error) {
-      Alert.alert("No se pudo crear plan", String(error));
+      Alert.alert("No se pudo guardar el plan", String(error));
     } finally {
       setSavingPlan(false);
     }
   };
 
-  const upcomingPlans = useMemo(() => plans.slice(0, 20), [plans]);
+  const onOpenVideo = async (url: string) => {
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert("No se pudo abrir el video");
+    }
+  };
 
   return (
     <Screen>
+      <Stack.Screen options={{ title: route?.title ?? "Spot" }} />
+
       <ScrollView contentContainerStyle={styles.container}>
         {loading || !route ? (
           <>
@@ -134,102 +154,162 @@ export default function RouteDetailScreen() {
               <ShimmerBlock height={18} width="40%" />
               <ShimmerBlock height={250} radius={12} />
             </Card>
-            <ShimmerCard lines={5} />
             <ShimmerCard lines={4} />
           </>
         ) : (
           <>
             <Card style={styles.routeCard}>
               <Text style={styles.routeTitle}>{route.title}</Text>
-              <Text style={styles.routeMeta}>{route.distance_km ?? "-"} km</Text>
-              <Text style={styles.routeDescription}>{route.description ?? "Sin descripcion."}</Text>
-              <Text style={styles.routeBy}>por @{route.profiles?.username ?? "rider"}</Text>
             </Card>
 
-            <Card style={styles.mapCard}>
-              <Text style={styles.mapTitle}>Mapa de la ruta</Text>
-              <View style={styles.mapWrap}>
-                <MapView
-                  mapType="standard"
-                  style={styles.map}
-                  initialRegion={{
-                    latitude: route.start_lat,
-                    longitude: route.start_lng,
-                    latitudeDelta: 0.06,
-                    longitudeDelta: 0.06
-                  }}
-                  onMapReady={() => setMapReady(true)}
-                >
-                  <Marker coordinate={{ latitude: route.start_lat, longitude: route.start_lng }} title="Inicio de ruta" pinColor="#ff6d00" />
-                  {routePoints.length > 1 ? (
-                    <Polyline
-                      coordinates={routePoints.map((point) => ({ latitude: point.lat, longitude: point.lng }))}
-                      strokeColor="#ff9e54"
-                      strokeWidth={4}
-                    />
-                  ) : null}
-                </MapView>
-                {!mapReady ? (
-                  <View pointerEvents="none" style={styles.mapLoadingOverlay}>
-                    <MapShimmer height={260} />
+            <Card style={styles.blockCard}>
+              <Text style={styles.blockTitle}>Contenido del spot</Text>
+
+              {mediaPosts.length === 0 ? (
+                <Text style={styles.emptyText}>Aun no hay fotos ni videos en este spot.</Text>
+              ) : (
+                <>
+                  <ScrollView
+                    horizontal
+                    pagingEnabled
+                    showsHorizontalScrollIndicator={false}
+                    snapToInterval={CAROUSEL_ITEM_WIDTH + 12}
+                    decelerationRate="fast"
+                    contentContainerStyle={styles.carouselContent}
+                    onMomentumScrollEnd={(event) => {
+                      const current = Math.round(event.nativeEvent.contentOffset.x / (CAROUSEL_ITEM_WIDTH + 12));
+                      setActiveSlide(Math.max(0, Math.min(current, mediaPosts.length - 1)));
+                    }}
+                  >
+                    {mediaPosts.map((post) => {
+                      const sortedMedia = [...(post.post_media ?? [])].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+                      const media = sortedMedia[0];
+
+                      return (
+                        <View key={post.id} style={[styles.slide, { width: CAROUSEL_ITEM_WIDTH }]}> 
+                          {media.media_type === "image" ? (
+                            <Image source={{ uri: media.media_url }} style={styles.slideImage} />
+                          ) : (
+                            <Pressable style={styles.videoSlide} onPress={() => onOpenVideo(media.media_url)}>
+                              <Ionicons name="videocam" size={20} color="#FF6A00" />
+                              <Text style={styles.videoSlideText}>Video</Text>
+                              <Text style={styles.videoSlideHint}>Pulsa para abrir</Text>
+                            </Pressable>
+                          )}
+
+                          <View style={styles.slideMeta}>
+                            <Text style={styles.slideAuthor}>@{post.profiles?.username ?? "rider"}</Text>
+                            <Text style={styles.slideBody} numberOfLines={2}>
+                              {post.body}
+                            </Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </ScrollView>
+
+                  <View style={styles.dotsRow}>
+                    {mediaPosts.map((post, index) => (
+                      <View
+                        key={`${post.id}-${index}`}
+                        style={[styles.dot, index === activeSlide && styles.dotActive]}
+                      />
+                    ))}
                   </View>
-                ) : null}
-              </View>
-            </Card>
-
-            <Card style={styles.blockCard}>
-              <Text style={styles.blockTitle}>Fotos de la ruta</Text>
-              <View style={styles.mediaGrid}>
-                {media.length === 0 ? (
-                  <Text style={styles.itemText}>Aun no hay fotos.</Text>
-                ) : (
-                  media.slice(0, 12).map((item) => <Image key={item.id} source={{ uri: item.media_url }} style={styles.mediaItem} />)
-                )}
-              </View>
-              <LabeledInput label="URL nueva foto" value={newMediaUrl} onChangeText={setNewMediaUrl} />
-              <AppButton label="Elegir foto de galeria" variant="secondary" onPress={onPickRouteMedia} />
-              <Text style={styles.helper}>La imagen se sube a Storage y luego se guarda en la ruta.</Text>
-              <AppButton label="Anadir foto" onPress={onAddMedia} loading={savingMedia} />
-            </Card>
-
-            <Card style={styles.blockCard}>
-              <Text style={styles.blockTitle}>Gente ahora en la ruta ({presenceCount})</Text>
-              {presenceMembers.length === 0 ? (
-                <Text style={styles.itemText}>Nadie conectado ahora.</Text>
-              ) : (
-                presenceMembers.map((member) => (
-                  <Pressable key={`${member.user_id}-${member.checked_in_at}`} style={styles.personRow}>
-                    <View style={styles.avatarDot} />
-                    <Text style={styles.itemText}>
-                      @{member.username ?? "rider"} · {member.bike_brand ?? "-"} {member.bike_model ?? ""}
-                    </Text>
-                  </Pressable>
-                ))
+                </>
               )}
             </Card>
 
             <Card style={styles.blockCard}>
-              <Text style={styles.blockTitle}>Van a estar en la ruta</Text>
-              {upcomingPlans.length === 0 ? (
-                <Text style={styles.itemText}>Sin planes publicados.</Text>
-              ) : (
-                upcomingPlans.map((plan) => (
-                  <Pressable key={plan.id} style={styles.personRow}>
-                    <View style={styles.planDot} />
-                    <Text style={styles.itemText}>
-                      @{plan.profiles?.username ?? "rider"} · {new Date(plan.planned_at).toLocaleString()}
-                      {plan.note ? ` · ${plan.note}` : ""}
-                    </Text>
-                  </Pressable>
-                ))
-              )}
-              <LabeledInput label="Voy a estar (ISO, ej: 2026-02-07T16:00:00Z)" value={newPlanAt} onChangeText={setNewPlanAt} />
-              <LabeledInput label="Nota (opcional)" value={newPlanNote} onChangeText={setNewPlanNote} />
-              <AppButton label="Publicar plan" onPress={onAddPlan} loading={savingPlan} />
+              <View style={styles.presenceHeader}>
+                <View style={styles.presenceInline}>
+                  <Ionicons name="person" size={16} color="#111827" />
+                  <Text style={styles.presenceCount}>{loadingPresence ? "..." : presenceCount}</Text>
+                </View>
+                <Pressable
+                  style={styles.viewUsersBtn}
+                  onPress={() => setMembersModalOpen(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Ver usuarios"
+                >
+                  <Ionicons name="eye-outline" size={18} color="#111827" />
+                </Pressable>
+              </View>
+            </Card>
+
+            <Card style={styles.blockCard}>
+              <View style={styles.actionsWrap}>
+                <Pressable
+                  style={[styles.actionIconBtnDark, checkingIn && styles.actionIconBtnDisabled]}
+                  onPress={onCheckIn}
+                  disabled={checkingIn}
+                  accessibilityRole="button"
+                  accessibilityLabel="Estoy en este spot"
+                >
+                  <Ionicons name={checkingIn ? "hourglass-outline" : "location"} size={19} color="#FFFFFF" />
+                </Pressable>
+                <Pressable
+                  style={[styles.actionIconBtnLight, savingPlan && styles.actionIconBtnDisabled]}
+                  onPress={onAddPlan}
+                  disabled={savingPlan}
+                  accessibilityRole="button"
+                  accessibilityLabel="Voy a estar en este spot"
+                >
+                  <Ionicons name={savingPlan ? "hourglass-outline" : "time-outline"} size={19} color="#111827" />
+                </Pressable>
+              </View>
             </Card>
           </>
         )}
       </ScrollView>
+
+      <Modal visible={membersModalOpen} transparent animationType="fade" onRequestClose={() => setMembersModalOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <Card style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Usuarios</Text>
+              <Pressable onPress={() => setMembersModalOpen(false)} style={styles.modalCloseBtn}>
+                <Ionicons name="close" size={16} color="#111827" />
+              </Pressable>
+            </View>
+
+            {presenceMembers.length === 0 ? (
+              <Text style={styles.emptyText}>Ahora mismo no hay usuarios activos.</Text>
+            ) : (
+              <ScrollView style={styles.membersList} contentContainerStyle={styles.membersListContent}>
+                {presenceMembers.map((member) => (
+                  <Pressable
+                    key={`${member.user_id}-${member.checked_in_at}`}
+                    style={styles.memberRow}
+                    onPress={() => {
+                      setMembersModalOpen(false);
+                      router.push(`/profile/${member.user_id}`);
+                    }}
+                  >
+                    {member.avatar_url ? (
+                      <Image source={{ uri: member.avatar_url }} style={styles.memberAvatarImage} />
+                    ) : (
+                      <View style={styles.memberAvatar}>
+                        <Ionicons name="person" size={15} color="#FF7A00" />
+                      </View>
+                    )}
+                    <View style={styles.memberMeta}>
+                      <Text style={styles.memberName}>
+                        {member.display_name?.trim() || `@${member.username ?? "rider"}`}
+                      </Text>
+                      <View style={styles.memberBikeRow}>
+                        <Ionicons name="bicycle-outline" size={12} color="#6B7280" />
+                        <Text style={styles.memberBike}>{`${member.bike_brand ?? ""} ${member.bike_model ?? ""}`.trim() || "Sin moto"}</Text>
+                      </View>
+                    </View>
+                    <Ionicons name="chevron-forward" size={14} color="#6B7280" />
+                  </Pressable>
+                ))}
+              </ScrollView>
+            )}
+          </Card>
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -239,93 +319,223 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingBottom: 26
   },
-  loadingText: {
-    color: "#111827",
-    fontWeight: "700"
-  },
   routeCard: {
-    gap: 7
+    gap: 6
   },
   routeTitle: {
     color: "#111827",
-    fontWeight: "900",
     fontSize: 24
   },
-  routeMeta: {
-    color: "#6B7280"
-  },
-  routeDescription: {
-    color: "#4B5563",
-    lineHeight: 20
-  },
-  routeBy: {
-    color: "#6B7280",
-    fontSize: 12
-  },
-  mapCard: {
-    gap: 8
-  },
-  mapTitle: {
-    color: "#111827",
-    fontWeight: "800"
-  },
-  map: {
-    width: "100%",
-    height: 260,
-    borderRadius: 12
-  },
-  mapWrap: {
-    width: "100%",
-    height: 260,
-    borderRadius: 12,
-    overflow: "hidden"
-  },
-  mapLoadingOverlay: {
-    ...StyleSheet.absoluteFillObject
-  },
   blockCard: {
-    gap: 8
+    gap: 10
   },
   blockTitle: {
     color: "#111827",
-    fontWeight: "900",
-    fontSize: 16
+    fontSize: 17
   },
-  mediaGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8
+  emptyText: {
+    color: "#6B7280",
+    fontSize: 13
   },
-  mediaItem: {
-    width: 90,
-    height: 70,
-    borderRadius: 8,
+  carouselContent: {
+    gap: 12,
+    paddingRight: 4
+  },
+  slide: {
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#2f4761",
-    backgroundColor: "#0a1016"
+    borderColor: "#E4E8EE",
+    backgroundColor: "#FFFFFF",
+    overflow: "hidden"
   },
-  itemText: {
-    color: "#4B5563"
+  slideImage: {
+    width: "100%",
+    height: 230,
+    backgroundColor: "#EEF2F7"
   },
-  helper: {
+  videoSlide: {
+    width: "100%",
+    height: 230,
+    backgroundColor: "#FFF4EC",
+    borderBottomWidth: 1,
+    borderBottomColor: "#FFD9C4",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4
+  },
+  videoSlideText: {
+    color: "#FF6A00",
+    fontSize: 14
+  },
+  videoSlideHint: {
     color: "#6B7280",
     fontSize: 12
   },
-  personRow: {
+  slideMeta: {
+    padding: 10,
+    gap: 3
+  },
+  slideAuthor: {
+    color: "#111827",
+    fontSize: 13
+  },
+  slideBody: {
+    color: "#4B5563",
+    fontSize: 12
+  },
+  dotsRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 4
+  },
+  dot: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
+    backgroundColor: "#D1D5DB"
+  },
+  dotActive: {
+    width: 18,
+    backgroundColor: "#FF6A00"
+  },
+  presenceHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10
+  },
+  presenceInline: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flex: 1,
+    minWidth: 0
+  },
+  presenceCount: {
+    color: "#111827",
+    fontSize: 17
+  },
+  viewUsersBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: "#E4E8EE",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  actionsWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
     gap: 8
   },
-  avatarDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: "#2a9d8f"
+  actionIconBtnDark: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#111827",
+    backgroundColor: "#111827",
+    alignItems: "center",
+    justifyContent: "center"
   },
-  planDot: {
-    width: 8,
-    height: 8,
+  actionIconBtnLight: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#E4E8EE",
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  actionIconBtnDisabled: {
+    opacity: 0.55
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(17,24,39,0.36)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 16
+  },
+  modalCard: {
+    width: "100%",
+    maxHeight: "70%",
+    gap: 10
+  },
+  modalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between"
+  },
+  modalTitle: {
+    color: "#111827",
+    fontSize: 18
+  },
+  modalCloseBtn: {
+    width: 28,
+    height: 28,
     borderRadius: 999,
-    backgroundColor: "#ff9e54"
+    backgroundColor: "#F4F6FA",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  membersList: {
+    maxHeight: 360
+  },
+  membersListContent: {
+    gap: 8,
+    paddingBottom: 4
+  },
+  memberRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#DDE3EC",
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 12,
+    paddingVertical: 11
+  },
+  memberAvatarImage: {
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#DDE3EC",
+    backgroundColor: "#F7F9FC"
+  },
+  memberAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#22C55E",
+    backgroundColor: "#0F1113",
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  memberMeta: {
+    flex: 1,
+    gap: 4
+  },
+  memberName: {
+    color: "#111827",
+    fontSize: 16
+  },
+  memberBikeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5
+  },
+  memberBike: {
+    color: "#6B7280",
+    fontSize: 12
   }
 });
